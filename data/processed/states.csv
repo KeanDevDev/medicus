@@ -1,0 +1,6 @@
+state_id,lgd_state_code,state_name,source,data_status
+MH,27,Maharashtra,LGD-GOI,REAL
+KA,29,Karnataka,LGD-GOI,REAL
+RJ,8,Rajasthan,LGD-GOI,REAL
+TN,33,Tamil Nadu,LGD-GOI,REAL
+UP,9,Uttar Pradesh,LGD-GOI,REAL

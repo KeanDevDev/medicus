@@ -1,0 +1,57 @@
+{
+  "algorithm": "Federated Averaging (FedAvg)",
+  "privacy_architecture": "State-local operational data partition; gradients/weights aggregated centrally without centralizing raw rows.",
+  "participating_clients": [
+    "MH",
+    "KA",
+    "RJ"
+  ],
+  "total_rounds": 3,
+  "rounds_history": [
+    {
+      "round_number": 1,
+      "participating_states": [
+        "MH",
+        "KA",
+        "RJ"
+      ],
+      "total_samples": 230400,
+      "global_model_version": "v1.0-fedavg",
+      "pre_aggregation_loss": 1.606,
+      "post_aggregation_loss": 0.6272,
+      "global_mae": 31.36,
+      "status": "COMPLETED",
+      "timestamp": "2026-09-26T22:59:42.554746"
+    },
+    {
+      "round_number": 2,
+      "participating_states": [
+        "MH",
+        "KA",
+        "RJ"
+      ],
+      "total_samples": 230400,
+      "global_model_version": "v2.0-fedavg",
+      "pre_aggregation_loss": 0.7025,
+      "post_aggregation_loss": 0.5991,
+      "global_mae": 29.95,
+      "status": "COMPLETED",
+      "timestamp": "2026-09-26T22:59:42.718527"
+    },
+    {
+      "round_number": 3,
+      "participating_states": [
+        "MH",
+        "KA",
+        "RJ"
+      ],
+      "total_samples": 230400,
+      "global_model_version": "v3.0-fedavg",
+      "pre_aggregation_loss": 0.7519,
+      "post_aggregation_loss": 0.6112,
+      "global_mae": 30.56,
+      "status": "COMPLETED",
+      "timestamp": "2026-09-26T22:59:42.903131"
+    }
+  ]
+}

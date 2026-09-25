@@ -1,0 +1,21 @@
+medicine_id,generic_name,category,dosage_form,unit,essential_medicine,shelf_life_days,min_safety_stock_days,lead_time_days,source,data_status
+MED_ORS,Oral Rehydration Salts (ORS),Gastrointestinal,Powder for Oral Solution,Sachet (21.8g),True,730,14,5,NLEM-2022,REAL
+MED_PCM_500,Paracetamol Tablets 500mg,Analgesic / Antipyretic,Tablet,10-Tablet Strip,True,1095,14,4,NLEM-2022,REAL
+MED_AMX_500,Amoxicillin Capsules 500mg,Antibacterial,Capsule,10-Capsule Strip,True,730,14,6,NLEM-2022,REAL
+MED_AZI_500,Azithromycin Tablets 500mg,Antibacterial,Tablet,3-Tablet Strip,True,730,14,7,NLEM-2022,REAL
+MED_MET_500,Metformin Tablets 500mg,Antidiabetic / NCD,Tablet,10-Tablet Strip,True,1095,21,5,NLEM-2022,REAL
+MED_AML_5,Amlodipine Tablets 5mg,Antihypertensive / NCD,Tablet,10-Tablet Strip,True,1095,21,5,NLEM-2022,REAL
+MED_CIP_500,Ciprofloxacin Tablets 500mg,Antibacterial,Tablet,10-Tablet Strip,True,1095,14,6,NLEM-2022,REAL
+MED_ALB_400,Albendazole Tablets 400mg,Anthelmintic,Chewable Tablet,Single Tablet,True,1095,14,5,NLEM-2022,REAL
+MED_IFA_L,Iron & Folic Acid Tablets (Large),Maternal & Child Health,Sugar-Coated Tablet,100-Tablet Bottle,True,730,28,7,NLEM-2022,REAL
+MED_ZNC_20,Zinc Sulphate Tablets Dispersible 20mg,Child Health,Dispersible Tablet,14-Tablet Strip,True,730,14,5,NLEM-2022,REAL
+MED_DIC_10,Dicyclomine Tablets 10mg,Gastrointestinal / Antispasmodic,Tablet,10-Tablet Strip,True,1095,14,4,NLEM-2022,REAL
+MED_CET_10,Cetirizine Tablets 10mg,Respiratory / Anti-allergic,Tablet,10-Tablet Strip,True,1095,14,4,NLEM-2022,REAL
+MED_SAL_INH,Salbutamol Inhaler 100mcg,Respiratory,Inhalation Aerosol,Canister (200 Doses),True,730,14,8,NLEM-2022,REAL
+MED_CHL_250,Chloroquine Phosphate Tablets 250mg,Antimalarial,Tablet,10-Tablet Strip,True,1095,21,6,NLEM-2022,REAL
+MED_ACT_CO,Artemether + Lumefantrine (ACT),Antimalarial,Tablet,6-Tablet Strip,True,730,21,8,NLEM-2022,REAL
+MED_DOX_100,Doxycycline Capsules 100mg,Antibacterial / Leptospirosis Prophylaxis,Capsule,10-Capsule Strip,True,730,14,6,NLEM-2022,REAL
+MED_PVI_OIN,Povidone Iodine Ointment 5% w/w,Antiseptic / Wound Care,Topical Ointment,15g Tube,True,1095,14,4,NLEM-2022,REAL
+MED_ARV_INJ,Anti-Rabies Vaccine (ARV),Emergency / Immunobiological,Injectable Vial,Vial (0.5ml / 1 Dose),True,730,21,10,NLEM-2022,REAL
+MED_ASV_INJ,Polyvalent Anti-Snake Venom Serum (ASV),Emergency / Antidote,Lyophilized Powder Vial,10ml Vial,True,1095,21,10,NLEM-2022,REAL
+MED_MTZ_400,Metronidazole Tablets 400mg,Gastrointestinal / Antimicrobial,Tablet,10-Tablet Strip,True,1095,14,5,NLEM-2022,REAL

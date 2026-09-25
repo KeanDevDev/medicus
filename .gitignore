@@ -1,0 +1,99 @@
+# =====================================================================
+# MEDICUS - Root Production Git Ignore Configuration
+# =====================================================================
+
+# 1. Environment Variables & Secrets
+.env
+.env.local
+.env.*.local
+*.key
+*.pem
+*.cert
+*.crt
+credentials.json
+
+# 2. Python & Virtual Environments
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+.venv/
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+.pytest_cache/
+.coverage
+htmlcov/
+.mypy_cache/
+
+# 3. Node.js & Frontend Build Artifacts
+node_modules/
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+dist/
+.vite/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# 4. SQLite Database Files
+# NOTE: The uncompressed SQLite database is ~126MB, which exceeds GitHub's 100MB limit.
+# The repository tracks the compressed archive `data/swasthya_grid.db.zip` (22MB).
+# `backend/database.py` automatically extracts it upon first launch.
+data/*.db
+data/*.sqlite
+data/*.sqlite3
+*.db-wal
+*.db-shm
+*.db-journal
+
+# Keep the compressed archive
+!data/swasthya_grid.db.zip
+
+# 5. IDE & Editor Artifacts
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.project
+.pydevproject
+.settings/
+
+# 6. Operating System Artifacts
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+[Dd]esktop.ini
+
+# 7. Temporary & Scratch Files
+scratch/
+tmp/
+temp/

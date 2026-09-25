@@ -1,0 +1,21 @@
+version: '3.8'
+
+services:
+  swasthya-grid:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8080:8080"
+    environment:
+      - PORT=8080
+      - GEMINI_API_KEY=${GEMINI_API_KEY:-}
+      - GEMINI_MODEL=${GEMINI_MODEL:-gemini-3.8-flash}
+      - GOOGLE_CLOUD_PROJECT=${GOOGLE_CLOUD_PROJECT:-}
+      - VERTEX_AI_LOCATION=${VERTEX_AI_LOCATION:-us-central1}
+      - SWASTHYA_DB_PATH=/app/data/swasthya_grid.db
+    volumes:
+      - swasthya-data:/app/data
+
+volumes:
+  swasthya-data:

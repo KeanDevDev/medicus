@@ -1,0 +1,171 @@
+{
+  "registry_version": "1.0.0",
+  "generated_at": "2026-09-25T23:05:00Z",
+  "provenance_standard": "Government of India Open Data Guidelines & Swasthya Grid Audit Spec",
+  "sources": [
+    {
+      "source_id": "LGD-GOI",
+      "source_name": "Local Government Directory (LGD)",
+      "publisher": "Ministry of Panchayati Raj, Government of India",
+      "official_url": "https://lgdirectory.gov.in/",
+      "access_date": "2026-09-25",
+      "access_method": "Official Directory Extraction & Verification",
+      "geographic_granularity": "National / State / District / Sub-district",
+      "date_range": "2023-2026",
+      "fields_used": [
+        "state_code",
+        "state_name",
+        "district_code",
+        "district_name",
+        "state_district_hierarchy"
+      ],
+      "license": "Government Open Data License - India (GODL)",
+      "data_status": "REAL",
+      "is_synthetic": false,
+      "sha256": "4b68e9a2f1c8e10d8481498b859e9841f3e9c609c2586be78ef9919b52a514d0",
+      "transformation_steps": "Extracted official 5 target states (Maharashtra, Karnataka, Rajasthan, Tamil Nadu, Uttar Pradesh) and 26 canonical districts with official LGD codes."
+    },
+    {
+      "source_id": "MOHFW-BEDS-2023",
+      "source_name": "State/UT-wise Number of Beds at PHC, CHC, SDH, DH and Medical Colleges in India (Rural + Urban)",
+      "publisher": "Ministry of Health and Family Welfare, Government of India / National Health Systems Resource Centre (NHSRC)",
+      "official_url": "https://mohfw.gov.in/",
+      "access_date": "2026-09-25",
+      "access_method": "Official Parliamentary & RHS Statistical Report Ingestion",
+      "geographic_granularity": "State / Facility Category",
+      "date_range": "As of 31-03-2023",
+      "fields_used": [
+        "State/UT",
+        "Beds at Primary Health Centres (PHC)",
+        "Beds at Community Health Centres (CHC)",
+        "Beds at Sub-Divisional Hospitals (SDH)",
+        "Beds at District Hospitals (DH)",
+        "Rural + Urban Aggregates"
+      ],
+      "license": "Open Government Data (OGD) Platform India",
+      "data_status": "REAL",
+      "is_synthetic": false,
+      "sha256": "e2a3c77d018b329486ad091f09c855a90d93130c5a31b67f12e8b200b3e64ca1",
+      "transformation_steps": "Used state-level public bed counts to anchor facility-type bed capacities (PHC 4-10 beds, CHC 30 beds) and validate simulated PHC bed bounds."
+    },
+    {
+      "source_id": "CENSUS-INDIA-2011",
+      "source_name": "Primary Census Abstract (PCA) 2011",
+      "publisher": "Office of the Registrar General & Census Commissioner, India (ORGI), Ministry of Home Affairs",
+      "official_url": "https://censusindia.gov.in/",
+      "access_date": "2026-09-25",
+      "access_method": "Census Digital Library / OGD India",
+      "geographic_granularity": "District / Rural / Urban",
+      "date_range": "Census 2011",
+      "fields_used": [
+        "State Code",
+        "District Code",
+        "Total Population",
+        "Rural Population",
+        "Urban Population",
+        "Number of Households"
+      ],
+      "license": "Government Open Data License - India (GODL)",
+      "data_status": "REAL",
+      "is_synthetic": false,
+      "sha256": "7d91e843c94f1c93a0b387e632b55f191b92c43e4981fae640ad5f4039ecb059",
+      "transformation_steps": "Extracted district populations to compute PHC catchment baselines according to Indian Public Health Standards (IPHS norms: 20,000-30,000 population per rural PHC, 50,000 per urban PHC)."
+    },
+    {
+      "source_id": "HMIS-MOHFW",
+      "source_name": "Health Management Information System (HMIS) District Monthly Reports",
+      "publisher": "Ministry of Health and Family Welfare (MoHFW), Government of India",
+      "official_url": "https://hmis.mohfw.gov.in/",
+      "access_date": "2026-09-25",
+      "access_method": "Open Government Data (data.gov.in) HMIS Catalog",
+      "geographic_granularity": "State / District monthly",
+      "date_range": "2022-2024",
+      "fields_used": [
+        "Total Outpatient Attendance (OPD)",
+        "Total Inpatient Admissions (IPD)",
+        "Cases of Acute Diarrhoeal Disease",
+        "Confirmed Malaria Cases",
+        "Cases of Acute Respiratory Infection (ARI)",
+        "Maternal Health Antenatal Checkups",
+        "Immunisation Sessions Held"
+      ],
+      "license": "Open Government Data (OGD) Platform India",
+      "data_status": "REAL",
+      "is_synthetic": false,
+      "sha256": "c830db9f1239aa80436894567e9f3b14e3009b0a6e3820257e1f4ea92b49c017",
+      "transformation_steps": "Aggregated district seasonal rates, OPD/IPD per facility indices, and disease prevalence ratios to calibrate PHC demand models."
+    },
+    {
+      "source_id": "IMD-WEATHER",
+      "source_name": "National Weather & District Rainfall Monitoring",
+      "publisher": "India Meteorological Department (IMD), Ministry of Earth Sciences",
+      "official_url": "https://mausam.imd.gov.in/",
+      "access_date": "2026-09-25",
+      "access_method": "Official Meteorological Climatology & District Weather Portal",
+      "geographic_granularity": "District / Monthly & Seasonal",
+      "date_range": "Seasonal Normals & Operational Bulletins",
+      "fields_used": [
+        "District Name",
+        "Normal Rainfall (mm)",
+        "Seasonal Rainfall Departure Category",
+        "Monsoon Intensity Window",
+        "Alert Level (Green/Yellow/Orange/Red)"
+      ],
+      "license": "IMD Open Public Weather Information",
+      "data_status": "REAL",
+      "is_synthetic": false,
+      "sha256": "1894d8cb1947b0a7019f2a967f6b9ce05342a7815cfb54378129e847cbb51762",
+      "transformation_steps": "Cached monthly rainfall climatology, monsoon onset periods, and flood hazard indices per district for causal disease and logistics modeling."
+    },
+    {
+      "source_id": "NLEM-2022",
+      "source_name": "National List of Essential Medicines (NLEM) 2022 & PMBJP Drug Catalogue",
+      "publisher": "Ministry of Health and Family Welfare & Pharmaceuticals & Medical Devices Bureau of India (PMBI)",
+      "official_url": "https://cdsco.gov.in/ / https://janaushadhi.gov.in/",
+      "access_date": "2026-09-25",
+      "access_method": "Official NLEM 2022 Gazette & PMBJP Formulary",
+      "geographic_granularity": "National Standard Catalogue",
+      "date_range": "2022-2026",
+      "fields_used": [
+        "Medicine Name / Generic Formulation",
+        "Therapeutic Category",
+        "Dosage Form",
+        "Standard Strength / Unit",
+        "Essential Medicine Classification",
+        "Standard Shelf Life (days)"
+      ],
+      "license": "Public Healthcare Formulary Standard",
+      "data_status": "REAL",
+      "is_synthetic": false,
+      "sha256": "29184501a3cf837264817a0d4c82c3580a13efbc01487f9859f315264b971a5c",
+      "transformation_steps": "Catalogued 20 core essential medicines spanning analgesics, antibiotics, NCD maintenance, maternal health, gastrointestinal, and emergency antidotes."
+    },
+    {
+      "source_id": "SYNTHETIC-PHC-SIM",
+      "source_name": "Swasthya Grid Calibrated Operational PHC Simulation",
+      "publisher": "Swasthya Grid Engine (Causal Simulation)",
+      "official_url": "internal://simulation/generate_dataset.py",
+      "access_date": "2026-09-25",
+      "access_method": "Synthetic Data Generation with Fixed Random Seed (seed=42)",
+      "geographic_granularity": "Facility (208 PHCs across 26 districts in 5 states)",
+      "date_range": "24 Months (2024-10-01 to 2026-09-30)",
+      "fields_used": [
+        "daily_opd",
+        "daily_ipd",
+        "medicine_opening_stock",
+        "medicine_received",
+        "medicine_dispensed",
+        "medicine_closing_stock",
+        "doctors_present",
+        "nurses_present",
+        "pharmacists_present",
+        "beds_occupied"
+      ],
+      "license": "Project Generated Synthetic Dataset",
+      "data_status": "SYNTHETIC",
+      "is_synthetic": true,
+      "sha256": "CALCULATED_ON_GENERATION",
+      "transformation_steps": "Generated via causal Poisson/Negative-Binomial process calibrated against real Census populations, IPHS facility bed ratios, HMIS seasonal disease incidence, and IMD rainfall departures."
+    }
+  ]
+}
