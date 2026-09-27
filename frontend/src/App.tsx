@@ -3,6 +3,7 @@ import { MedicusNavbar, MedicusNavKey } from './components/MedicusNavbar';
 import { DetailDrawers } from './components/DetailDrawers';
 import { SpotlightSearchModal } from './components/SpotlightSearchModal';
 import { JudgeModeModal } from './components/JudgeModeModal';
+import { GooglePhcMap } from './components/GooglePhcMap';
 import { Language, getTranslation } from './i18n/translations';
 import { UserRole, DrawerState, NotificationItem, TransferRow } from './types';
 import { api } from './services/api';
@@ -77,10 +78,13 @@ function MedicusAppContent() {
   };
 
   useEffect(() => {
-    if (user) {
+    if (!user) return;
+    loadNotifications();
+    const interval = setInterval(() => {
       loadNotifications();
-    }
-  }, [refreshKey, user]);
+    }, 5000);
+    return () => clearInterval(interval);
+  }, [user, refreshKey]);
 
   const handleRefresh = () => {
     setRefreshKey((prev) => prev + 1);
@@ -189,6 +193,27 @@ function MedicusAppContent() {
               onSelectPhc={handleSelectPhc}
               currentLang={currentLang}
             />
+          )}
+
+          {activeTab === 'map' && (
+            <div className="space-y-6">
+              <div className="pt-2">
+                <h1 className="text-4xl sm:text-5xl font-extrabold text-[#1D1D1F] tracking-tight">
+                  PHC Geospatial Explorer
+                </h1>
+                <p className="text-sm text-black/60 mt-1 font-medium">
+                  Real-time Google Maps telemetry and supply risk tracking across all 208 primary health centres
+                </p>
+              </div>
+
+              <GooglePhcMap
+                onSelectPhc={handleSelectPhc}
+                height="680px"
+                title="National Primary Healthcare Network"
+                subtitle="Live Google Maps view showing real-world coordinates, satellite terrain, bed capacities, and real-time inventory risk status"
+                showFilters={true}
+              />
+            </div>
           )}
 
           {activeTab === 'state' && (

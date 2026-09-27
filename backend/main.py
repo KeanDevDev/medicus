@@ -224,20 +224,43 @@ def get_districts(state_id: Optional[str] = None):
 def get_phcs(
     state_id: Optional[str] = None,
     district_id: Optional[str] = None,
-    limit: int = 100,
+    limit: int = 500,
     offset: int = 0
 ):
     with get_db() as conn:
         cursor = conn.cursor()
-        query = "SELECT * FROM phcs WHERE 1=1"
+        query = """
+            SELECT 
+                p.*,
+                d.district_name,
+                s.state_name,
+                COALESCE(r.critical_count, 0) as critical_risks_count,
+                COALESCE(r.highest_severity, 'OPTIMAL') as status
+            FROM phcs p
+            LEFT JOIN districts d ON p.district_id = d.district_id
+            LEFT JOIN states s ON p.state_id = s.state_id
+            LEFT JOIN (
+                SELECT 
+                    phc_id,
+                    COUNT(CASE WHEN severity = 'CRITICAL' THEN 1 END) as critical_count,
+                    CASE 
+                        WHEN SUM(CASE WHEN severity = 'CRITICAL' THEN 1 ELSE 0 END) > 0 THEN 'CRITICAL'
+                        WHEN SUM(CASE WHEN severity = 'HIGH' THEN 1 ELSE 0 END) > 0 THEN 'WATCH'
+                        ELSE 'OPTIMAL'
+                    END as highest_severity
+                FROM stockout_risks
+                GROUP BY phc_id
+            ) r ON p.phc_id = r.phc_id
+            WHERE 1=1
+        """
         params = []
         if state_id:
-            query += " AND state_id = ?"
+            query += " AND p.state_id = ?"
             params.append(state_id)
         if district_id:
-            query += " AND district_id = ?"
+            query += " AND p.district_id = ?"
             params.append(district_id)
-        query += " ORDER BY phc_id ASC LIMIT ? OFFSET ?"
+        query += " ORDER BY p.phc_id ASC LIMIT ? OFFSET ?"
         params.extend([limit, offset])
         cursor.execute(query, params)
         return rows_to_dicts(cursor)
@@ -582,14 +605,22 @@ def get_recommendations(
         """
         params = []
         if status:
-            query += " AND t.status = ?"
-            params.append(status)
+            if status.upper() in ("ACTIVE", "RECOMMENDED"):
+                query += " AND t.status IN ('RECOMMENDED', 'REQUESTED')"
+            elif "," in status:
+                statuses = [s.strip().upper() for s in status.split(",")]
+                placeholders = ",".join(["?"] * len(statuses))
+                query += f" AND t.status IN ({placeholders})"
+                params.extend(statuses)
+            elif status.upper() != "ALL":
+                query += " AND t.status = ?"
+                params.append(status)
         if priority:
             query += " AND t.priority = ?"
             params.append(priority)
             
         # Scope enforcement: If logged-in user is a PHC operator, restrict to their facility transfers
-        if user and user.get("role") == "phc_operator":
+        if user and isinstance(user, dict) and user.get("role") == "phc_operator":
             query += " AND (t.source_phc = ? OR t.destination_phc = ?)"
             params.extend([user["phc_id"], user["phc_id"]])
         elif phc_id:

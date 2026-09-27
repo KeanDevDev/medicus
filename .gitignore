@@ -4,8 +4,11 @@
 
 # 1. Environment Variables & Secrets
 .env
-.env.local
-.env.*.local
+.env.*
+*.env
+frontend/.env
+frontend/.env.*
+frontend/src/config/mapsKey.ts
 *.key
 *.pem
 *.cert

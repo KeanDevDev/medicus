@@ -12,31 +12,38 @@ interface Props {
   onOpenTransferDrawer?: (transfer: TransferRow) => void;
 }
 
+type StatusTabType = 'ACTIVE' | 'REQUESTED' | 'RECOMMENDED' | 'APPROVED' | 'ALL';
+
 export const RecommendationsView: React.FC<Props> = ({
   onSelectPhc,
   onOpenTransferDrawer,
 }) => {
   const [transfers, setTransfers] = useState<TransferRow[]>([]);
-  const [statusTab, setStatusTab] = useState<'RECOMMENDED' | 'APPROVED' | 'ALL'>('RECOMMENDED');
+  const [statusTab, setStatusTab] = useState<StatusTabType>('ACTIVE');
   const [priorityFilter, setPriorityFilter] = useState('');
   const [loading, setLoading] = useState(true);
   const [processingId, setProcessingId] = useState<string | null>(null);
   const [feedbackNotice, setFeedbackNotice] = useState<string | null>(null);
 
+  // Live polling interval for real-time updates
   useEffect(() => {
-    loadTransfers();
+    loadTransfers(true);
+    const interval = setInterval(() => {
+      loadTransfers(false);
+    }, 4000);
+    return () => clearInterval(interval);
   }, [priorityFilter, statusTab]);
 
-  const loadTransfers = async () => {
-    setLoading(true);
+  const loadTransfers = async (showLoadingState = true) => {
+    if (showLoadingState) setLoading(true);
     try {
       const statusParam = statusTab === 'ALL' ? undefined : statusTab;
       const data = await api.getRecommendations(priorityFilter || undefined, statusParam);
       setTransfers(data);
     } catch (e) {
-      console.error(e);
+      console.error('Failed to load transfers:', e);
     } finally {
-      setLoading(false);
+      if (showLoadingState) setLoading(false);
     }
   };
 
@@ -71,38 +78,60 @@ export const RecommendationsView: React.FC<Props> = ({
     }
   };
 
+  const requestedCount = transfers.filter(t => t.status === 'REQUESTED').length;
+
   return (
     <div className="space-y-10 pb-16">
       {/* Header */}
       <section className="flex flex-col md:flex-row md:items-end justify-between gap-4 pt-4">
         <div>
-          <h1 className="text-4xl sm:text-5xl font-extrabold text-[#1D1D1F] tracking-tight">
+          <div className="flex items-center gap-2">
+            <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-ping" />
+            <span className="text-xs font-semibold uppercase tracking-wider text-black/40">
+              Live Logistics Dispatch
+            </span>
+          </div>
+          <h1 className="text-4xl sm:text-5xl font-extrabold text-[#1D1D1F] tracking-tight mt-1">
             Redistribution Logistics
           </h1>
           <p className="text-sm text-black/60 mt-1 font-medium">
-            Lateral Rebalancing Optimization • Minimum Distance Routing
+            Lateral Rebalancing Optimization • Minimum Distance Routing • Real-Time PHC Requests
           </p>
         </div>
 
         {/* Tab & Filter Controls */}
         <div className="flex flex-wrap items-center gap-2">
-          {/* Status Tab Pills */}
-          <div className="flex items-center gap-1 bg-white p-1 rounded-full border border-black/5 shadow-xs text-xs font-semibold">
+          {/* Status Tab Pills with mouse wheel horizontal scroll */}
+          <div 
+            onWheel={(e) => {
+              if (e.deltaY !== 0) e.currentTarget.scrollLeft += e.deltaY;
+            }}
+            className="flex items-center gap-1 bg-white p-1 rounded-full border border-black/5 shadow-xs text-xs font-semibold overflow-x-auto scrollbar-none"
+          >
             {[
-              { id: 'RECOMMENDED', label: 'Active Recommendations' },
-              { id: 'APPROVED', label: 'Approved Transfers' },
-              { id: 'ALL', label: 'All' },
+              { id: 'ACTIVE', label: 'All Active Pending' },
+              { id: 'REQUESTED', label: 'PHC Requests', badge: requestedCount },
+              { id: 'RECOMMENDED', label: 'AI Optimization' },
+              { id: 'APPROVED', label: 'Approved / In-Transit' },
+              { id: 'ALL', label: 'All History' },
             ].map((tab) => (
               <button
                 key={tab.id}
-                onClick={() => setStatusTab(tab.id as any)}
-                className={`px-3 py-1.5 rounded-full transition-all cursor-pointer ${
+                onClick={() => setStatusTab(tab.id as StatusTabType)}
+                className={`px-3 py-1.5 rounded-full transition-all cursor-pointer flex items-center gap-1.5 whitespace-nowrap ${
                   statusTab === tab.id
                     ? 'bg-[#1D1D1F] text-white shadow-xs'
                     : 'text-black/60 hover:text-black'
                 }`}
               >
-                {tab.label}
+                <span>{tab.label}</span>
+                {tab.badge !== undefined && tab.badge > 0 && (
+                  <span className={`text-[10px] px-1.5 py-0.2 rounded-full font-bold ${
+                    statusTab === tab.id ? 'bg-[#FF3B30] text-white' : 'bg-[#FFEAEA] text-[#FF3B30]'
+                  }`}>
+                    {tab.badge}
+                  </span>
+                )}
               </button>
             ))}
           </div>
@@ -157,7 +186,8 @@ export const RecommendationsView: React.FC<Props> = ({
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
             {transfers.map((tr) => {
-              const isApproved = tr.status === 'APPROVED';
+              const isApproved = tr.status === 'APPROVED' || tr.status === 'COMPLETED' || tr.status === 'IN_TRANSIT';
+              const isRequested = tr.status === 'REQUESTED';
 
               return (
                 <motion.div
@@ -168,9 +198,21 @@ export const RecommendationsView: React.FC<Props> = ({
                   {/* Top: Medicine info & Priority / Status pill */}
                   <div className="flex items-center justify-between">
                     <div>
-                      <h3 className="text-lg font-bold text-[#1D1D1F]">
-                        {tr.generic_name}
-                      </h3>
+                      <div className="flex items-center gap-2">
+                        <h3 className="text-lg font-bold text-[#1D1D1F]">
+                          {tr.generic_name}
+                        </h3>
+                        {isRequested && (
+                          <span className="text-[10px] font-bold px-2.5 py-0.5 rounded-full uppercase bg-[#FFEAEA] text-[#FF3B30] border border-[#FF3B30]/30 animate-pulse">
+                            PHC Request
+                          </span>
+                        )}
+                        {!isRequested && !isApproved && (
+                          <span className="text-[10px] font-bold px-2 py-0.5 rounded-full uppercase bg-[#EAF8EE] text-[#34C759] border border-[#34C759]/30">
+                            AI Plan
+                          </span>
+                        )}
+                      </div>
                       <div className="text-xs text-black/40 font-mono mt-0.5">
                         {tr.transfer_id} • {tr.category}
                       </div>
@@ -178,7 +220,7 @@ export const RecommendationsView: React.FC<Props> = ({
                     <div className="flex items-center gap-1.5">
                       {isApproved && (
                         <span className="text-[10px] font-bold px-2.5 py-0.5 rounded-full uppercase bg-[#EAF8EE] text-[#34C759] border border-[#34C759]/30">
-                          APPROVED
+                          {tr.status}
                         </span>
                       )}
                       <span
