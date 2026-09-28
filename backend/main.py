@@ -10,7 +10,7 @@ import sqlite3
 import datetime
 import uuid
 from typing import List, Optional, Dict, Any
-from fastapi import FastAPI, HTTPException, Query, Depends, status, UploadFile, File
+from fastapi import FastAPI, HTTPException, Query, Depends, status, UploadFile, File, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
@@ -107,6 +107,8 @@ class GeminiAskRequest(BaseModel):
     state_id: Optional[str] = None
     district_id: Optional[str] = None
     phc_id: Optional[str] = None
+    conversation_history: Optional[List[Dict[str, str]]] = None
+    api_key: Optional[str] = None
 
 # Helper functions
 def rows_to_dicts(cursor: sqlite3.Cursor) -> List[Dict[str, Any]]:
@@ -1323,43 +1325,36 @@ def get_operational_brief(req: GeminiBriefRequest):
         brief = gemini_service.generate_operations_brief(context)
         return brief
 
+@app.get("/api/gemini/status")
+def get_gemini_status():
+    """Returns the operational status of Google Gemini AI and Guardrails."""
+    return {
+        "is_configured": gemini_service.is_configured,
+        "model": gemini_service.model,
+        "service": f"Google Gemini ({gemini_service.model}) Grounded Assistant" if gemini_service.is_configured else "Medicus Grounded Local Telemetry Engine",
+        "guardrails_active": True,
+        "free_tier_safe": True,
+        "supported_models": ["gemini-3.8-flash", "gemini-2.5-flash", "gemini-1.5-flash"]
+    }
+
 @app.post("/api/gemini/ask")
-def ask_control_tower(req: GeminiAskRequest):
-    with get_db() as conn:
-        cursor = conn.cursor()
-        
-        # Retrieve relevant context
-        cursor.execute("""
-            SELECT r.phc_id, p.phc_name, m.generic_name, r.severity, r.days_of_stock,
-                   i.closing_stock, i.lead_time_days, f.predicted_demand
-            FROM stockout_risks r
-            JOIN phcs p ON r.phc_id = p.phc_id
-            JOIN medicines m ON r.medicine_id = m.medicine_id
-            JOIN inventory i ON r.phc_id = i.phc_id AND r.medicine_id = i.medicine_id AND i.date = (SELECT MAX(date) FROM inventory)
-            LEFT JOIN forecasts f ON r.phc_id = f.phc_id AND r.medicine_id = f.medicine_id
-            ORDER BY r.risk_probability DESC LIMIT 8
-        """)
-        top_risks = rows_to_dicts(cursor)
-        
-        cursor.execute("""
-            SELECT t.transfer_id, t.source_phc, t.destination_phc, m.generic_name,
-                   t.quantity, t.estimated_transport_distance, t.estimated_lead_time,
-                   t.source_surplus, t.destination_need, t.priority
-            FROM transfers t
-            JOIN medicines m ON t.medicine_id = m.medicine_id
-            WHERE t.status = 'RECOMMENDED'
-            ORDER BY CASE t.priority WHEN 'CRITICAL' THEN 1 ELSE 2 END LIMIT 5
-        """)
-        recommendations = rows_to_dicts(cursor)
-        
-        context = {
-            "top_risks": top_risks,
-            "recommendations": recommendations,
-            "current_date": datetime.datetime.now().strftime("%Y-%m-%d")
-        }
-        
-        response = gemini_service.ask_control_tower(req.question, context)
-        return response
+def ask_control_tower(req: GeminiAskRequest, request: Request):
+    header_key = request.headers.get("X-Gemini-API-Key")
+    api_key = req.api_key or header_key
+
+    filters = {
+        "state_id": req.state_id,
+        "district_id": req.district_id,
+        "phc_id": req.phc_id
+    }
+    
+    response = gemini_service.ask_control_tower(
+        question=req.question,
+        conversation_history=req.conversation_history,
+        api_key=api_key,
+        filters=filters
+    )
+    return response
 
 # -----------------
 # 9. Provenance & Model Metrics Transparency

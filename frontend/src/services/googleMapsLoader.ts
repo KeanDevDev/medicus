@@ -109,11 +109,22 @@ export const loadGoogleMaps = async (customKey?: string): Promise<any> => {
     script.defer = true;
 
     script.onload = () => {
-      if (window.google?.maps) {
-        resolve(window.google.maps);
-      } else {
-        reject(new Error('Google Maps SDK object not found after script execution'));
-      }
+      const startedAt = Date.now();
+      const resolveWhenReady = () => {
+        if (window.google?.maps) {
+          resolve(window.google.maps);
+          return;
+        }
+
+        if (Date.now() - startedAt >= 10000) {
+          reject(new Error('Google Maps SDK object not found after script execution'));
+          return;
+        }
+
+        window.setTimeout(resolveWhenReady, 50);
+      };
+
+      resolveWhenReady();
     };
 
     script.onerror = () => {

@@ -427,11 +427,25 @@ export const api = {
     return res.json();
   },
 
-  askControlTower: async (question: string, context?: { state_id?: string; district_id?: string; phc_id?: string }): Promise<any> => {
+  getGeminiStatus: async (): Promise<any> => {
+    const res = await fetch(`${API_BASE}/gemini/status`, { headers: getAuthHeaders() });
+    if (!res.ok) throw new Error('Failed to fetch Gemini status');
+    return res.json();
+  },
+
+  askControlTower: async (
+    question: string,
+    context?: { state_id?: string; district_id?: string; phc_id?: string; conversation_history?: any[]; api_key?: string }
+  ): Promise<any> => {
+    const customKey = localStorage.getItem('medicus_gemini_api_key') || '';
+    const headers = getAuthHeaders({ 'Content-Type': 'application/json' }) as Record<string, string>;
+    if (customKey) {
+      headers['X-Gemini-API-Key'] = customKey;
+    }
     const res = await fetch(`${API_BASE}/gemini/ask`, {
       method: 'POST',
-      headers: getAuthHeaders({ 'Content-Type': 'application/json' }),
-      body: JSON.stringify({ question, ...(context || {}) }),
+      headers,
+      body: JSON.stringify({ question, ...(context || {}), api_key: context?.api_key || customKey || undefined }),
     });
     if (!res.ok) throw new Error('Control Tower query failed');
     return res.json();

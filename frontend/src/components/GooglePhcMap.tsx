@@ -98,6 +98,12 @@ export const GooglePhcMap: React.FC<Props> = ({
 
       if (!mapContainerRef.current) return;
 
+      await new Promise<void>((resolve) => {
+        requestAnimationFrame(() => resolve());
+      });
+
+      if (!mapContainerRef.current) return;
+
       // Default center: Geographic center of India
       const defaultCenter = { lat: 21.7679, lng: 78.8718 };
 

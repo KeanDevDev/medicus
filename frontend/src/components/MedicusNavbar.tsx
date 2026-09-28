@@ -124,7 +124,7 @@ export const MedicusNavbar: React.FC<Props> = ({
     { key: 'copilot', label: t.nav_copilot, highlight: true },
   ];
 
-  const secondaryNavItems: { key: MedicusNavKey; label: string }[] = [
+  const secondaryNavItems: { key: MedicusNavKey; label: string; highlight?: boolean }[] = [
     { key: 'state', label: t.nav_states },
     { key: 'district', label: t.nav_districts },
     { key: 'workforce', label: t.nav_workforce },
