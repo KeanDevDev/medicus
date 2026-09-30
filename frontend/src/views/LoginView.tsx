@@ -52,11 +52,8 @@ export const LoginView: React.FC = () => {
     <div className="min-h-screen bg-[#F5F5F7] text-[#1D1D1F] flex flex-col justify-between p-4 sm:p-8 selection:bg-blue-100">
       {/* Top Bar Branding */}
       <header className="max-w-6xl w-full mx-auto flex items-center justify-between py-2">
-        <div className="flex items-center gap-3">
-          <img src={medicusLogo} alt="frontend logo" className="w-16 h-16 object-contain object-left" />
-          <div className="text-left">
-            <div className="text-2xl font-black tracking-tight text-[#1D1D1F]">frontend</div>
-          </div>
+        <div className="flex items-center">
+          <img src={medicusLogo} alt="Medicus logo" className="w-36 h-24 object-contain object-left" />
         </div>
 
         <div className="hidden sm:flex items-center gap-2 px-3 py-1.5 bg-white/80 backdrop-blur rounded-full border border-gray-200/80 text-xs text-gray-600 shadow-2xs">
@@ -74,7 +71,7 @@ export const LoginView: React.FC = () => {
             <span className="inline-block text-xs font-semibold px-2.5 py-1 bg-blue-50 text-[#0071E3] rounded-full uppercase tracking-wider mb-2">
               Authentication Portal
             </span>
-            <h2 className="text-2xl font-bold text-[#1D1D1F] tracking-tight">Sign in to frontend</h2>
+            <h2 className="text-2xl font-bold text-[#1D1D1F] tracking-tight">Sign in to Medicus</h2>
             <p className="text-sm text-gray-500 mt-1">
               Access national oversight or your facility's operational command center.
             </p>
@@ -163,7 +160,7 @@ export const LoginView: React.FC = () => {
                   Instant Evaluator Presets
                 </h3>
                 <p className="text-xs text-gray-500 mt-0.5">
-                  Select a pre-configured role to immediately experience frontend.
+                  Select a pre-configured role to immediately experience Medicus.
                 </p>
               </div>
               <span className="text-[11px] font-semibold px-2 py-0.5 bg-blue-50 text-[#0071E3] rounded-md">
