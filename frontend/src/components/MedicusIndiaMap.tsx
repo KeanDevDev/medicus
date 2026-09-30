@@ -117,13 +117,13 @@ export const MedicusIndiaMap: React.FC<Props> = ({
       <div className="flex items-center justify-between z-10">
         <div>
           <div className="text-xs font-semibold uppercase tracking-wider text-black/40">
-            Federated Topology
+            Network Topology
           </div>
           <h2 className="text-2xl font-bold text-[#1D1D1F] tracking-tight mt-0.5">
             5 Pilot States • 208 Facilities
           </h2>
           <p className="text-xs text-black/50 mt-1">
-            Edge nodes actively training localized models with zero raw patient data sharing
+            Real-time supply chain telemetry and localized operational node monitoring
           </p>
         </div>
 

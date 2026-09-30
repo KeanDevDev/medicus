@@ -21,6 +21,7 @@ import sys
 import json
 import datetime
 import sqlite3
+from typing import Optional, List
 import numpy as np
 import pandas as pd
 import joblib
@@ -106,104 +107,165 @@ def run_emergency_scenario(scenario_id: str) -> dict:
         scenario_desc = scen_row[1]
         params = json.loads(scen_row[2])
         
-        demand_factor = float(params.get("demand_factor", 1.0))
-        disease_factor = float(params.get("disease_factor", 1.0))
-        lead_time_mult = float(params.get("lead_time_multiplier", 1.0))
-        affected_districts = params.get("affected_districts", [])
+        return execute_scenario_core(conn, scenario_id, scenario_name, scenario_desc, params, before_kpi)
+
+def execute_scenario_core(conn: sqlite3.Connection, scenario_id: str, scenario_name: str, scenario_desc: str, params: dict, before_kpi: dict) -> dict:
+    """Core logic to apply disaster shock parameters, rerun forecasting, optimizer, and compute deltas."""
+    cursor = conn.cursor()
+    demand_factor = float(params.get("demand_factor", 1.0))
+    disease_factor = float(params.get("disease_factor", 1.0))
+    lead_time_mult = float(params.get("lead_time_multiplier", 1.0))
+    affected_districts = params.get("affected_districts", [])
+    temp_surge = float(params.get("temperature_surge", 0.0))
+    rain_surge = float(params.get("rainfall_surge", 0.0))
+    
+    # 3. Apply scenario modifications to current day operational records
+    cursor.execute("SELECT MAX(date) FROM healthcare_demand")
+    latest_date = cursor.fetchone()[0]
+    
+    if affected_districts == ["ALL"] or len(affected_districts) == 0:
+        district_filter = "1=1"
+    else:
+        dist_list_str = "', '".join(affected_districts)
+        district_filter = f"phc_id IN (SELECT phc_id FROM phcs WHERE district_id IN ('{dist_list_str}'))"
         
-        # 3. Apply scenario modifications to current day operational records
-        cursor.execute("SELECT MAX(date) FROM healthcare_demand")
-        latest_date = cursor.fetchone()[0]
+    # Weather warning logic
+    if scenario_id in ('SCN_FLOOD', 'SCN_CYCLONE'):
+        warning_expr = "'RED'"
+    elif scenario_id in ('SCN_MONSOON', 'SCN_HEATWAVE'):
+        warning_expr = "'ORANGE'"
+    elif scenario_id == 'SCN_NORMAL':
+        warning_expr = "'GREEN'"
+    else:
+        warning_expr = "weather_warning"
+
+    # Rainfall surge calculation
+    if scenario_id in ('SCN_MONSOON', 'SCN_FLOOD'):
+        rain_add = 75.0
+    elif scenario_id == 'SCN_CYCLONE':
+        rain_add = 120.0
+    else:
+        rain_add = rain_surge
+
+    # Update demand, temperature & weather signals
+    cursor.execute(f"""
+        UPDATE healthcare_demand
+        SET opd_patients = CAST(opd_patients * {demand_factor} AS INTEGER),
+            ipd_patients = CAST(ipd_patients * {min(demand_factor * 1.25, 3.0)} AS INTEGER),
+            disease_index = ROUND(MIN(disease_index * {disease_factor}, 3.8), 2),
+            temperature = ROUND(temperature + {temp_surge}, 1),
+            rainfall_mm = rainfall_mm + {rain_add},
+            weather_warning = {warning_expr}
+        WHERE date = '{latest_date}' AND {district_filter}
+    """)
+    
+    # Update bed occupancies
+    cursor.execute(f"""
+        UPDATE beds
+        SET beds_occupied = MIN(bed_capacity, CAST(beds_occupied * {demand_factor * 1.15} AS INTEGER)),
+            beds_available = MAX(0, bed_capacity - MIN(bed_capacity, CAST(beds_occupied * {demand_factor * 1.15} AS INTEGER))),
+            occupancy_rate = ROUND(CAST(MIN(bed_capacity, CAST(beds_occupied * {demand_factor * 1.15} AS INTEGER)) AS REAL) / bed_capacity, 2)
+        WHERE date = '{latest_date}' AND {district_filter}
+    """)
+    
+    # Update inventory depletion and lead time with strict mass conservation
+    cursor.execute(f"""
+        UPDATE inventory
+        SET dispensed_quantity = MIN(opening_stock + received_quantity - damaged_quantity, CAST(dispensed_quantity * {demand_factor} AS INTEGER)),
+            lead_time_days = CAST(lead_time_days * {lead_time_mult} AS INTEGER)
+        WHERE date = '{latest_date}' AND {district_filter}
+    """)
+    cursor.execute(f"""
+        UPDATE inventory
+        SET closing_stock = opening_stock + received_quantity - dispensed_quantity - damaged_quantity
+        WHERE date = '{latest_date}' AND {district_filter}
+    """)
+    
+    # 4. Rerun ML models on modified operational state
+    demand_model_path = os.path.join(MODELS_DIR, "demand_forecaster.joblib")
+    stockout_model_path = os.path.join(MODELS_DIR, "stockout_classifier.joblib")
+    
+    if os.path.exists(demand_model_path) and os.path.exists(stockout_model_path):
+        demand_model = joblib.load(demand_model_path)
+        stockout_model = joblib.load(stockout_model_path)
         
-        if affected_districts == ["ALL"] or len(affected_districts) == 0:
-            district_filter = "1=1"
-        else:
-            dist_list_str = "', '".join(affected_districts)
-            district_filter = f"phc_id IN (SELECT phc_id FROM phcs WHERE district_id IN ('{dist_list_str}'))"
-            
-        # Update demand & weather signals
-        cursor.execute(f"""
-            UPDATE healthcare_demand
-            SET opd_patients = CAST(opd_patients * {demand_factor} AS INTEGER),
-                ipd_patients = CAST(ipd_patients * {min(demand_factor * 1.2, 2.5)} AS INTEGER),
-                disease_index = ROUND(MIN(disease_index * {disease_factor}, 3.5), 2),
-                rainfall_mm = CASE WHEN '{scenario_id}' IN ('SCN_MONSOON', 'SCN_FLOOD') THEN rainfall_mm + 75.0 ELSE rainfall_mm END,
-                weather_warning = CASE WHEN '{scenario_id}' = 'SCN_FLOOD' THEN 'RED' 
-                                      WHEN '{scenario_id}' = 'SCN_MONSOON' THEN 'ORANGE' 
-                                      ELSE weather_warning END
-            WHERE date = '{latest_date}' AND {district_filter}
-        """)
+        # Recompute forecasts and stockout risks
+        from backend.ml.train_models import populate_operational_forecasts_and_risks, STOCKOUT_FEATURES
+        populate_operational_forecasts_and_risks(
+            conn, demand_model, 
+            ["lag_1_demand", "lag_7_demand", "rolling_7_mean", "opd_patients", "disease_index", "rainfall_mm", "population_served", "day_of_week", "month"],
+            28.0,
+            stockout_model,
+            STOCKOUT_FEATURES
+        )
         
-        # Update bed occupancies
-        cursor.execute(f"""
-            UPDATE beds
-            SET beds_occupied = MIN(bed_capacity, CAST(beds_occupied * {demand_factor * 1.15} AS INTEGER)),
-                beds_available = MAX(0, bed_capacity - MIN(bed_capacity, CAST(beds_occupied * {demand_factor * 1.15} AS INTEGER))),
-                occupancy_rate = ROUND(CAST(MIN(bed_capacity, CAST(beds_occupied * {demand_factor * 1.15} AS INTEGER)) AS REAL) / bed_capacity, 2)
-            WHERE date = '{latest_date}' AND {district_filter}
-        """)
+    # 5. Rerun Deterministic Redistribution Optimizer
+    run_redistribution_optimizer(conn)
         
-        # Update inventory depletion and lead time with strict mass conservation
-        cursor.execute(f"""
-            UPDATE inventory
-            SET dispensed_quantity = MIN(opening_stock + received_quantity - damaged_quantity, CAST(dispensed_quantity * {demand_factor} AS INTEGER)),
-                lead_time_days = CAST(lead_time_days * {lead_time_mult} AS INTEGER)
-            WHERE date = '{latest_date}' AND {district_filter}
-        """)
-        cursor.execute(f"""
-            UPDATE inventory
-            SET closing_stock = opening_stock + received_quantity - dispensed_quantity - damaged_quantity
-            WHERE date = '{latest_date}' AND {district_filter}
-        """)
-        
-        # 4. Rerun ML models on modified operational state
-        demand_model_path = os.path.join(MODELS_DIR, "demand_forecaster.joblib")
-        stockout_model_path = os.path.join(MODELS_DIR, "stockout_classifier.joblib")
-        
-        if os.path.exists(demand_model_path) and os.path.exists(stockout_model_path):
-            demand_model = joblib.load(demand_model_path)
-            stockout_model = joblib.load(stockout_model_path)
-            
-            # Recompute forecasts and stockout risks
-            from backend.ml.train_models import populate_operational_forecasts_and_risks, STOCKOUT_FEATURES
-            populate_operational_forecasts_and_risks(
-                conn, demand_model, 
-                ["lag_1_demand", "lag_7_demand", "rolling_7_mean", "opd_patients", "disease_index", "rainfall_mm", "population_served", "day_of_week", "month"],
-                28.0,
-                stockout_model,
-                STOCKOUT_FEATURES
-            )
-            
-        # 5. Rerun Deterministic Redistribution Optimizer
-        run_redistribution_optimizer(conn)
-        
-        # 6. Capture AFTER snapshot
-        after_kpi = get_current_kpi_snapshot(conn)
-        
-        comparison = {
-            "scenario_id": scenario_id,
-            "scenario_name": scenario_name,
-            "description": scenario_desc,
-            "affected_districts": affected_districts,
-            "parameters": params,
-            "timestamp": datetime.datetime.now().isoformat(),
-            "before": before_kpi,
-            "after": after_kpi,
-            "deltas": {
-                "phcs_at_risk_delta": after_kpi["phcs_at_risk"] - before_kpi["phcs_at_risk"],
-                "critical_risks_delta": after_kpi["critical_risks"] - before_kpi["critical_risks"],
-                "beds_available_delta": after_kpi["beds_available"] - before_kpi["beds_available"],
-                "recommended_transfers_delta": after_kpi["recommended_transfers"] - before_kpi["recommended_transfers"],
-                "transfer_volume_delta": after_kpi["transfer_volume"] - before_kpi["transfer_volume"]
-            }
+    # 6. Capture AFTER snapshot
+    after_kpi = get_current_kpi_snapshot(conn)
+    
+    comparison = {
+        "scenario_id": scenario_id,
+        "scenario_name": scenario_name,
+        "description": scenario_desc,
+        "affected_districts": affected_districts,
+        "parameters": params,
+        "timestamp": datetime.datetime.now().isoformat(),
+        "before": before_kpi,
+        "after": after_kpi,
+        "deltas": {
+            "phcs_at_risk_delta": after_kpi["phcs_at_risk"] - before_kpi["phcs_at_risk"],
+            "critical_risks_delta": after_kpi["critical_risks"] - before_kpi["critical_risks"],
+            "beds_available_delta": after_kpi["beds_available"] - before_kpi["beds_available"],
+            "recommended_transfers_delta": after_kpi["recommended_transfers"] - before_kpi["recommended_transfers"],
+            "transfer_volume_delta": after_kpi["transfer_volume"] - before_kpi["transfer_volume"]
         }
+    }
+    
+    print(f"Scenario {scenario_name} Complete.")
+    print(f"  PHCs at High Risk: {before_kpi['phcs_at_risk']} -> {after_kpi['phcs_at_risk']} (Delta: +{comparison['deltas']['phcs_at_risk_delta']})")
+    print(f"  Available Beds:    {before_kpi['beds_available']} -> {after_kpi['beds_available']} (Delta: {comparison['deltas']['beds_available_delta']})")
+    print(f"  Recommended Transfers: {before_kpi['recommended_transfers']} -> {after_kpi['recommended_transfers']}")
+    
+    return comparison
+
+def run_custom_emergency_scenario(
+    name: str,
+    description: str,
+    demand_factor: float = 1.5,
+    disease_factor: float = 1.5,
+    lead_time_multiplier: float = 1.5,
+    temperature_surge: float = 0.0,
+    rainfall_surge: float = 0.0,
+    affected_districts: Optional[list] = None
+) -> dict:
+    """Executes a custom user-defined emergency simulation scenario and saves it to the scenario catalog."""
+    if affected_districts is None or len(affected_districts) == 0:
+        affected_districts = ["ALL"]
         
-        print(f"Scenario {scenario_name} Complete.")
-        print(f"  PHCs at High Risk: {before_kpi['phcs_at_risk']} -> {after_kpi['phcs_at_risk']} (Delta: +{comparison['deltas']['phcs_at_risk_delta']})")
-        print(f"  Available Beds:    {before_kpi['beds_available']} -> {after_kpi['beds_available']} (Delta: {comparison['deltas']['beds_available_delta']})")
-        print(f"  Recommended Transfers: {before_kpi['recommended_transfers']} -> {after_kpi['recommended_transfers']}")
+    scenario_id = f"SCN_CUSTOM_{datetime.datetime.now().strftime('%Y%m%d%H%M%S')}"
+    params = {
+        "demand_factor": demand_factor,
+        "disease_factor": disease_factor,
+        "lead_time_multiplier": lead_time_multiplier,
+        "temperature_surge": temperature_surge,
+        "rainfall_surge": rainfall_surge,
+        "affected_districts": affected_districts
+    }
+    
+    with get_db() as conn:
+        cursor = conn.cursor()
+        now_ts = datetime.datetime.now().isoformat()
+        # Persist custom scenario in registry so it appears in scenario lists
+        cursor.execute("""
+            INSERT OR REPLACE INTO emergency_scenarios (scenario_id, name, description, parameters, created_at)
+            VALUES (?, ?, ?, ?, ?)
+        """, (scenario_id, name, description, json.dumps(params), now_ts))
+        conn.commit()
         
-        return comparison
+        before_kpi = get_current_kpi_snapshot(conn)
+        return execute_scenario_core(conn, scenario_id, name, description, params, before_kpi)
 
 if __name__ == "__main__":
     res = run_emergency_scenario("SCN_MONSOON")

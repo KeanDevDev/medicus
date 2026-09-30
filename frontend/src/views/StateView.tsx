@@ -96,8 +96,13 @@ export const StateView: React.FC<Props> = ({
           </p>
         </div>
 
-        {/* State Selector Pills */}
-        <div className="flex items-center gap-1.5 overflow-x-auto pb-1 scrollbar-none">
+        {/* State Selector Pills with mouse wheel horizontal scroll */}
+        <div 
+          onWheel={(e) => {
+            if (e.deltaY !== 0) e.currentTarget.scrollLeft += e.deltaY;
+          }}
+          className="flex items-center gap-1.5 overflow-x-auto pb-1 scrollbar-none"
+        >
           {states.map((st) => (
             <button
               key={st.state_id}

@@ -5,6 +5,7 @@ Relational SQLite implementation fully compliant with Google Cloud / PostgreSQL 
 """
 
 import os
+import json
 import sqlite3
 from typing import Generator
 import contextlib
@@ -83,6 +84,48 @@ def ensure_db_migrations(conn: sqlite3.Connection):
     
     conn.commit()
     seed_users_if_needed(conn)
+    seed_emergency_scenarios_if_needed(conn)
+
+def seed_emergency_scenarios_if_needed(conn: sqlite3.Connection):
+    """Seeds advanced emergency simulation scenarios if not present."""
+    cursor = conn.cursor()
+    cursor.execute("SELECT COUNT(*) FROM emergency_scenarios WHERE scenario_id = 'SCN_HEATWAVE'")
+    if cursor.fetchone()[0] == 0:
+        import datetime
+        now_ts = datetime.datetime.now().isoformat()
+        scenarios = [
+            (
+                "SCN_HEATWAVE",
+                "Severe Heatwave & Dehydration Crisis",
+                "Extreme peak summer temperatures (>45°C) trigger acute heat exhaustion, severe dehydration, and dialysis/IV fluid surges. Demand for ORS and Normal Saline spikes 2.4x.",
+                json.dumps({
+                    "demand_factor": 2.2,
+                    "disease_factor": 2.8,
+                    "lead_time_multiplier": 1.4,
+                    "temperature_surge": 8.0,
+                    "affected_districts": ["RJ_JAI", "RJ_UDA", "UP_LKO", "UP_VAR", "MH_PUN"]
+                }),
+                now_ts
+            ),
+            (
+                "SCN_CYCLONE",
+                "Super Cyclone Landfall & Coastal Isolation",
+                "Severe Category-4 cyclone makes landfall, knocking out primary highway links, rural power grids, and cold-chain storage. Lead times jump 3.5x with severe anti-snake venom and emergency trauma deficits.",
+                json.dumps({
+                    "demand_factor": 1.9,
+                    "disease_factor": 2.4,
+                    "lead_time_multiplier": 3.5,
+                    "rainfall_surge": 120.0,
+                    "affected_districts": ["TN_CHE", "MH_KOL", "MH_SAN"]
+                }),
+                now_ts
+            )
+        ]
+        cursor.executemany(
+            "INSERT OR IGNORE INTO emergency_scenarios (scenario_id, name, description, parameters, created_at) VALUES (?, ?, ?, ?, ?)",
+            scenarios
+        )
+        conn.commit()
 
 def seed_users_if_needed(conn: sqlite3.Connection):
     """Seeds default admin and PHC operator accounts if not present."""

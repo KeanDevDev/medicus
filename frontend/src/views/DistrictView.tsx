@@ -3,6 +3,7 @@ import { motion } from 'framer-motion';
 import { ArrowLeft, ChevronRight, MapPin, Activity, Stethoscope, AlertTriangle, CheckCircle2 } from 'lucide-react';
 import { DistrictRecord, PhcRecord } from '../types';
 import { api } from '../services/api';
+import { GooglePhcMap } from '../components/GooglePhcMap';
 
 interface Props {
   selectedDistrictId: string;
@@ -76,8 +77,13 @@ export const DistrictView: React.FC<Props> = ({
           </p>
         </div>
 
-        {/* District Switcher Pills */}
-        <div className="flex items-center gap-1.5 overflow-x-auto pb-1 scrollbar-none max-w-xl">
+        {/* District Switcher Pills with mouse wheel horizontal scroll */}
+        <div 
+          onWheel={(e) => {
+            if (e.deltaY !== 0) e.currentTarget.scrollLeft += e.deltaY;
+          }}
+          className="flex items-center gap-1.5 overflow-x-auto pb-1 scrollbar-none max-w-xl"
+        >
           {districts.slice(0, 8).map((d) => (
             <button
               key={d.district_id}
@@ -94,53 +100,17 @@ export const DistrictView: React.FC<Props> = ({
         </div>
       </section>
 
-      {/* Floating Facility Map Canvas */}
-      <section className="bg-white rounded-3xl p-6 sm:p-8 shadow-sm border border-black/4 space-y-4">
-        <div className="flex items-center justify-between">
-          <div>
-            <div className="text-xs font-semibold uppercase tracking-wider text-black/40">
-              Catchment Distribution
-            </div>
-            <h3 className="text-xl font-bold text-[#1D1D1F] tracking-tight mt-0.5">
-              District Facility Cluster
-            </h3>
-          </div>
-          <span className="text-xs text-black/40 font-mono">
-            {currentDistrict?.latitude}°N, {currentDistrict?.longitude}°E
-          </span>
-        </div>
-
-        {/* Vector representation of district facilities */}
-        <div className="h-48 bg-[#F8F8FA] rounded-2xl flex items-center justify-around px-4 relative overflow-hidden">
-          {phcs.map((phc, idx) => {
-            const isCritical = idx === 0;
-            const isWarning = idx === 1;
-
-            return (
-              <motion.div
-                key={phc.phc_id}
-                whileHover={{ scale: 1.15 }}
-                onClick={() => onSelectPhc(phc.phc_id)}
-                className="flex flex-col items-center gap-1.5 cursor-pointer z-10"
-              >
-                <div
-                  className={`w-7 h-7 rounded-full flex items-center justify-center text-white shadow-xs ${
-                    isCritical
-                      ? 'bg-[#FF3B30] ring-4 ring-[#FF3B30]/20'
-                      : isWarning
-                      ? 'bg-[#FF9500]'
-                      : 'bg-[#007AFF]'
-                  }`}
-                >
-                  <Stethoscope className="w-3.5 h-3.5" />
-                </div>
-                <span className="text-[11px] font-bold text-[#1D1D1F] max-w-[80px] text-center truncate">
-                  {phc.phc_name.split(' ')[0]}
-                </span>
-              </motion.div>
-            );
-          })}
-        </div>
+      {/* Geographic Facility Google Map */}
+      <section>
+        <GooglePhcMap
+          phcs={phcs}
+          selectedDistrictId={selectedDistrictId}
+          onSelectPhc={onSelectPhc}
+          height="440px"
+          title={`${currentDistrict?.district_name || 'District'} Primary Health Facilities`}
+          subtitle={`Geographic positioning and live supply status across ${phcs.length} monitored facilities`}
+          showFilters={true}
+        />
       </section>
 
       {/* Primary Health Facility Cards */}

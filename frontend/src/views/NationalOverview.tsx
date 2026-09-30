@@ -2,11 +2,12 @@ import React, { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import { 
   ShieldCheck, Activity, Sparkles, ArrowRight, 
-  Info, CheckCircle2, ChevronRight 
+  Info, CheckCircle2, ChevronRight, MapPin 
 } from 'lucide-react';
 import { NationalKPIs, StateRecord, StockoutRiskRow, TransferRow, AnalyticsTrendRow } from '../types';
 import { api } from '../services/api';
 import { MedicusIndiaMap } from '../components/MedicusIndiaMap';
+import { GooglePhcMap } from '../components/GooglePhcMap';
 import { CapacityRings } from '../components/CapacityRings';
 import { LiveOperationsFeed } from '../components/LiveOperationsFeed';
 import { DemandTrajectoryChart } from '../components/DemandTrajectoryChart';
@@ -33,6 +34,7 @@ export const NationalOverview: React.FC<Props> = ({
   const [trends, setTrends] = useState<AnalyticsTrendRow[]>([]);
   const [aiBrief, setAiBrief] = useState<any>(null);
   const [loading, setLoading] = useState(true);
+  const [mapViewMode, setMapViewMode] = useState<'google' | 'topology'>('google');
 
   const t = getTranslation(currentLang);
 
@@ -45,15 +47,19 @@ export const NationalOverview: React.FC<Props> = ({
   };
 
   useEffect(() => {
-    loadData();
+    loadData(true);
+    const interval = setInterval(() => {
+      loadData(false);
+    }, 5000);
+    return () => clearInterval(interval);
   }, []);
 
-  const loadData = async () => {
-    setLoading(true);
+  const loadData = async (showLoading = true) => {
+    if (showLoading) setLoading(true);
     try {
       const [kpisRes, transfersRes, trendsRes, briefRes] = await Promise.all([
         api.getNationalKpis(),
-        api.getRecommendations('CRITICAL', 'RECOMMENDED'),
+        api.getRecommendations(undefined, 'ACTIVE'),
         api.getAnalyticsTrends(14),
         api.getOperationalBrief({}),
       ]);
@@ -62,9 +68,9 @@ export const NationalOverview: React.FC<Props> = ({
       setTrends(trendsRes);
       setAiBrief(briefRes);
     } catch (e) {
-      console.error(e);
+      console.error('Failed to load national data:', e);
     } finally {
-      setLoading(false);
+      if (showLoading) setLoading(false);
     }
   };
 
@@ -120,11 +126,46 @@ export const NationalOverview: React.FC<Props> = ({
       {/* 2. HERO: MAP (~65%) + FLOATING OPERATIONS PANEL (~35%) */}
       <section className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-stretch">
         {/* Map: 65% width on desktop */}
-        <div className="lg:col-span-8 flex flex-col">
-          <MedicusIndiaMap
-            onSelectState={onSelectState}
-            onSelectPhc={onSelectPhc}
-          />
+        <div className="lg:col-span-8 flex flex-col space-y-3">
+          {/* Mode Switcher */}
+          <div className="flex items-center gap-1.5 bg-white p-1 rounded-2xl border border-black/4 shadow-xs self-start">
+            <button
+              onClick={() => setMapViewMode('google')}
+              className={`px-3.5 py-1.5 rounded-xl text-xs font-semibold transition-all cursor-pointer flex items-center gap-1.5 ${
+                mapViewMode === 'google'
+                  ? 'bg-[#1D1D1F] text-white shadow-xs'
+                  : 'text-black/60 hover:text-black hover:bg-[#F5F5F7]'
+              }`}
+            >
+              <MapPin className="w-3.5 h-3.5 text-[#007AFF]" />
+              <span>Google Maps (208 PHCs)</span>
+            </button>
+            <button
+              onClick={() => setMapViewMode('topology')}
+              className={`px-3.5 py-1.5 rounded-xl text-xs font-semibold transition-all cursor-pointer flex items-center gap-1.5 ${
+                mapViewMode === 'topology'
+                  ? 'bg-[#1D1D1F] text-white shadow-xs'
+                  : 'text-black/60 hover:text-black hover:bg-[#F5F5F7]'
+              }`}
+            >
+              <Activity className="w-3.5 h-3.5 text-emerald-500" />
+              <span>Network Radar</span>
+            </button>
+          </div>
+
+          {mapViewMode === 'google' ? (
+            <GooglePhcMap
+              onSelectPhc={onSelectPhc}
+              height="530px"
+              title="National Public Health Facility Grid"
+              subtitle="Real-time Google Maps telemetry plotted at exact geographic coordinates for all 208 pilot PHCs"
+            />
+          ) : (
+            <MedicusIndiaMap
+              onSelectState={onSelectState}
+              onSelectPhc={onSelectPhc}
+            />
+          )}
         </div>
 
         {/* Floating Operations Panel: 35% width */}

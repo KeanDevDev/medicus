@@ -39,6 +39,8 @@ export interface PhcRecord {
   data_status: DataStatus;
   district_name?: string;
   state_name?: string;
+  critical_risks_count?: number;
+  status?: 'CRITICAL' | 'WATCH' | 'OPTIMAL';
   latest_demand?: any;
   latest_beds?: any;
   latest_staff?: any;

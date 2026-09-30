@@ -1,4 +1,4 @@
-# MEDICUS (स्वास्थ्य ग्रिड / Swasthya Grid)
+# MEDICUS
 ### Enterprise Public Healthcare Operations, Federated AI & Supply Chain Command Platform
 **Built for the "Build with AI: Code for Communities — Smart Health" Hackathon**
 

@@ -396,6 +396,43 @@ export const api = {
     return res.json();
   },
 
+  runCustomSimulation: async (params: {
+    name: string;
+    description: string;
+    demand_factor: number;
+    disease_factor: number;
+    lead_time_multiplier: number;
+    temperature_surge?: number;
+    rainfall_surge?: number;
+    affected_districts?: string[];
+  }): Promise<SimulationResult> => {
+    const res = await fetch(`${API_BASE}/simulation/custom`, {
+      method: 'POST',
+      headers: getAuthHeaders({ 'Content-Type': 'application/json' }),
+      body: JSON.stringify(params),
+    });
+    if (!res.ok) throw new Error('Custom simulation execution failed');
+    return res.json();
+  },
+
+  resetSimulation: async (): Promise<any> => {
+    const res = await fetch(`${API_BASE}/simulation/reset`, {
+      method: 'POST',
+      headers: getAuthHeaders(),
+    });
+    if (!res.ok) throw new Error('Failed to reset simulation');
+    return res.json();
+  },
+
+  // -----------------
+  // Real-time Telemetry
+  // -----------------
+  getRealtimeStatus: async (): Promise<any> => {
+    const res = await fetch(`${API_BASE}/realtime/status`, { headers: getAuthHeaders() });
+    if (!res.ok) throw new Error('Failed to fetch realtime status');
+    return res.json();
+  },
+
   // -----------------
   // Federated Learning
   // -----------------
@@ -415,9 +452,15 @@ export const api = {
   },
 
   // -----------------
-  // Gemini Operational AI
+  // Grounded AI Control Tower (Dual Google Gemini & OpenAI Engine)
   // -----------------
-  getOperationalBrief: async (req: { state_id?: string; district_id?: string; phc_id?: string }): Promise<any> => {
+  getOperationalBrief: async (req: {
+    state_id?: string;
+    district_id?: string;
+    phc_id?: string;
+    provider?: string;
+    model?: string;
+  }): Promise<any> => {
     const res = await fetch(`${API_BASE}/gemini/brief`, {
       method: 'POST',
       headers: getAuthHeaders({ 'Content-Type': 'application/json' }),
@@ -427,11 +470,61 @@ export const api = {
     return res.json();
   },
 
-  askControlTower: async (question: string, context?: { state_id?: string; district_id?: string; phc_id?: string }): Promise<any> => {
-    const res = await fetch(`${API_BASE}/gemini/ask`, {
+  getGeminiStatus: async (): Promise<any> => {
+    const res = await fetch(`${API_BASE}/llm/status`, { headers: getAuthHeaders() });
+    if (!res.ok) throw new Error('Failed to fetch LLM status');
+    return res.json();
+  },
+
+  getLlmStatus: async (): Promise<any> => {
+    const res = await fetch(`${API_BASE}/llm/status`, { headers: getAuthHeaders() });
+    if (!res.ok) throw new Error('Failed to fetch LLM status');
+    return res.json();
+  },
+
+  askControlTower: async (
+    question: string,
+    context?: {
+      state_id?: string;
+      district_id?: string;
+      phc_id?: string;
+      conversation_history?: any[];
+      api_key?: string;
+      provider?: 'gemini' | 'openai' | 'auto';
+      model?: string;
+    }
+  ): Promise<any> => {
+    const geminiKey = localStorage.getItem('medicus_gemini_api_key') || '';
+    const openaiKey = localStorage.getItem('medicus_openai_api_key') || '';
+    const storedProvider = (localStorage.getItem('medicus_llm_provider') as any) || 'auto';
+    const storedModel = localStorage.getItem('medicus_llm_model') || '';
+
+    const activeProvider = context?.provider || storedProvider || 'auto';
+    const activeModel = context?.model || storedModel || undefined;
+
+    const headers = getAuthHeaders({ 'Content-Type': 'application/json' }) as Record<string, string>;
+    if (geminiKey) headers['X-Gemini-API-Key'] = geminiKey;
+    if (openaiKey) headers['X-OpenAI-API-Key'] = openaiKey;
+    if (activeProvider && activeProvider !== 'auto') headers['X-LLM-Provider'] = activeProvider;
+    if (activeModel) headers['X-LLM-Model'] = activeModel;
+
+    let activeKey = context?.api_key;
+    if (!activeKey) {
+      if (activeProvider === 'openai') activeKey = openaiKey;
+      else if (activeProvider === 'gemini') activeKey = geminiKey;
+      else activeKey = geminiKey || openaiKey;
+    }
+
+    const res = await fetch(`${API_BASE}/llm/ask`, {
       method: 'POST',
-      headers: getAuthHeaders({ 'Content-Type': 'application/json' }),
-      body: JSON.stringify({ question, ...(context || {}) }),
+      headers,
+      body: JSON.stringify({
+        question,
+        ...(context || {}),
+        api_key: activeKey || undefined,
+        provider: activeProvider !== 'auto' ? activeProvider : undefined,
+        model: activeModel || undefined,
+      }),
     });
     if (!res.ok) throw new Error('Control Tower query failed');
     return res.json();

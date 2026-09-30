@@ -7,11 +7,17 @@ import os
 import sys
 import json
 import sqlite3
+import os
+import sys
+import json
+import sqlite3
 import datetime
 import uuid
+import asyncio
 from typing import List, Optional, Dict, Any
-from fastapi import FastAPI, HTTPException, Query, Depends, status, UploadFile, File
+from fastapi import FastAPI, HTTPException, Query, Depends, status, UploadFile, File, Request
 from fastapi.middleware.cors import CORSMiddleware
+from starlette.responses import StreamingResponse
 from pydantic import BaseModel
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
@@ -43,6 +49,43 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Real-time Broadcast Bus
+class RealtimeBroadcaster:
+    def __init__(self):
+        self.subscribers: List[asyncio.Queue] = []
+        self.version: int = 1
+        self.last_event: Dict[str, Any] = {
+            "type": "INITIAL",
+            "version": 1,
+            "timestamp": datetime.datetime.now().isoformat()
+        }
+
+    def subscribe(self) -> asyncio.Queue:
+        q = asyncio.Queue(maxsize=100)
+        self.subscribers.append(q)
+        return q
+
+    def unsubscribe(self, q: asyncio.Queue):
+        if q in self.subscribers:
+            self.subscribers.remove(q)
+
+    def publish_event(self, event_data: Dict[str, Any]):
+        self.version += 1
+        event_data["version"] = self.version
+        if "timestamp" not in event_data:
+            event_data["timestamp"] = datetime.datetime.now().isoformat()
+        self.last_event = event_data
+        dead = []
+        for q in self.subscribers:
+            try:
+                q.put_nowait(event_data)
+            except Exception:
+                dead.append(q)
+        for d in dead:
+            self.unsubscribe(d)
+
+broadcaster = RealtimeBroadcaster()
 
 # Pydantic Schemas
 class LoginRequest(BaseModel):
@@ -97,21 +140,122 @@ class TransferActionRequest(BaseModel):
 class SimulationRequest(BaseModel):
     scenario_id: str
 
+class CustomSimulationRequest(BaseModel):
+    name: str
+    description: str
+    demand_factor: float = 1.5
+    disease_factor: float = 1.5
+    lead_time_multiplier: float = 1.5
+    temperature_surge: float = 0.0
+    rainfall_surge: float = 0.0
+    affected_districts: Optional[List[str]] = None
+
 class GeminiBriefRequest(BaseModel):
     state_id: Optional[str] = None
     district_id: Optional[str] = None
     phc_id: Optional[str] = None
+    provider: Optional[str] = None
+    model: Optional[str] = None
+    api_key: Optional[str] = None
 
 class GeminiAskRequest(BaseModel):
     question: str
     state_id: Optional[str] = None
     district_id: Optional[str] = None
     phc_id: Optional[str] = None
+    conversation_history: Optional[List[Dict[str, str]]] = None
+    api_key: Optional[str] = None
+    provider: Optional[str] = None
+    model: Optional[str] = None
 
 # Helper functions
 def rows_to_dicts(cursor: sqlite3.Cursor) -> List[Dict[str, Any]]:
     columns = [col[0] for col in cursor.description]
     return [dict(zip(columns, row)) for row in cursor.fetchall()]
+
+def sync_phc_inventory_risk(conn: sqlite3.Connection, phc_id: str, medicine_id: str):
+    """Dynamically recalculates calibrated stockout risk and depletion horizon for a facility."""
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT i.*, m.generic_name, m.min_safety_stock_days
+        FROM inventory i
+        JOIN medicines m ON i.medicine_id = m.medicine_id
+        WHERE i.phc_id = ? AND i.medicine_id = ?
+        ORDER BY i.date DESC LIMIT 1
+    """, (phc_id, medicine_id))
+    inv_row = cursor.fetchone()
+    if not inv_row:
+        return
+        
+    closing = inv_row["closing_stock"]
+    lead_time = inv_row["lead_time_days"]
+    min_safety = inv_row["min_safety_stock_days"] if inv_row["min_safety_stock_days"] else 14
+    
+    # Calculate daily burn rate from recent history or current day
+    cursor.execute("""
+        SELECT AVG(dispensed_quantity)
+        FROM inventory
+        WHERE phc_id = ? AND medicine_id = ?
+        ORDER BY date DESC LIMIT 7
+    """, (phc_id, medicine_id))
+    avg_burn = cursor.fetchone()[0]
+    burn_rate = max(1.0, float(avg_burn) if avg_burn and avg_burn > 0 else float(inv_row["dispensed_quantity"] or 5))
+    
+    days_of_stock = round(float(closing) / burn_rate, 1)
+    depletion_horizon = days_of_stock
+    
+    if closing <= 0:
+        prob = 0.99
+        severity = "CRITICAL"
+        factors = [{"factor": "STOCKOUT_PRESENT", "severity": "CRITICAL", "detail": "On-hand inventory is completely exhausted (0 units)."}]
+    elif depletion_horizon <= 3.0:
+        prob = 0.88
+        severity = "CRITICAL"
+        factors = [{"factor": "DEPLETION_CRITICAL", "severity": "CRITICAL", "detail": f"Depletion horizon is {depletion_horizon} days, below immediate safety threshold of 3 days."}]
+    elif depletion_horizon <= 7.0:
+        prob = 0.65
+        severity = "HIGH"
+        factors = [{"factor": "DEPLETION_WARNING", "severity": "HIGH", "detail": f"Depletion horizon is {depletion_horizon} days, within the 7-day replenishment window."}]
+    elif depletion_horizon <= min_safety:
+        prob = 0.35
+        severity = "WATCH"
+        factors = [{"factor": "SAFETY_BUFFER_BREACH", "severity": "MEDIUM", "detail": f"Stock is within the {min_safety}-day safety buffer window."}]
+    else:
+        prob = 0.05
+        severity = "NORMAL"
+        factors = [{"factor": "STABLE_INVENTORY", "severity": "LOW", "detail": f"Adequate stock buffer of {depletion_horizon} days; stable consumption velocity."}]
+        
+    risk_pct = round(prob * 100.0, 1)
+    now_ts = datetime.datetime.now().isoformat()
+    stockout_days = max(1, int(depletion_horizon)) if depletion_horizon > 0 else 0
+    if depletion_horizon <= 0:
+        expected_date = datetime.date.today().isoformat()
+    elif depletion_horizon < 30:
+        expected_date = (datetime.date.today() + datetime.timedelta(days=stockout_days)).isoformat()
+    else:
+        expected_date = None
+        
+    risk_id = f"RISK-{phc_id}-{medicine_id}"
+    
+    cursor.execute("SELECT risk_id FROM stockout_risks WHERE phc_id = ? AND medicine_id = ?", (phc_id, medicine_id))
+    existing = cursor.fetchone()
+    if existing:
+        cursor.execute("""
+            UPDATE stockout_risks
+            SET risk_probability = ?, risk_percent = ?, days_of_stock = ?,
+                depletion_horizon = ?, severity = ?, risk_factors = ?,
+                expected_stockout_date = ?, created_at = ?
+            WHERE phc_id = ? AND medicine_id = ?
+        """, (prob, risk_pct, days_of_stock, depletion_horizon, severity, json.dumps(factors), expected_date, now_ts, phc_id, medicine_id))
+    else:
+        cursor.execute("""
+            INSERT INTO stockout_risks (
+                risk_id, phc_id, medicine_id, risk_probability, risk_percent,
+                expected_stockout_date, days_of_stock, depletion_horizon,
+                severity, risk_factors, model_version, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (risk_id, phc_id, medicine_id, prob, risk_pct, expected_date, days_of_stock, depletion_horizon, severity, json.dumps(factors), "v2.0.0-realtime", now_ts))
+    conn.commit()
 
 # -----------------
 # 0. Authentication & User Management Endpoints
@@ -224,20 +368,43 @@ def get_districts(state_id: Optional[str] = None):
 def get_phcs(
     state_id: Optional[str] = None,
     district_id: Optional[str] = None,
-    limit: int = 100,
+    limit: int = 500,
     offset: int = 0
 ):
     with get_db() as conn:
         cursor = conn.cursor()
-        query = "SELECT * FROM phcs WHERE 1=1"
+        query = """
+            SELECT 
+                p.*,
+                d.district_name,
+                s.state_name,
+                COALESCE(r.critical_count, 0) as critical_risks_count,
+                COALESCE(r.highest_severity, 'OPTIMAL') as status
+            FROM phcs p
+            LEFT JOIN districts d ON p.district_id = d.district_id
+            LEFT JOIN states s ON p.state_id = s.state_id
+            LEFT JOIN (
+                SELECT 
+                    phc_id,
+                    COUNT(CASE WHEN severity = 'CRITICAL' THEN 1 END) as critical_count,
+                    CASE 
+                        WHEN SUM(CASE WHEN severity = 'CRITICAL' THEN 1 ELSE 0 END) > 0 THEN 'CRITICAL'
+                        WHEN SUM(CASE WHEN severity = 'HIGH' THEN 1 ELSE 0 END) > 0 THEN 'WATCH'
+                        ELSE 'OPTIMAL'
+                    END as highest_severity
+                FROM stockout_risks
+                GROUP BY phc_id
+            ) r ON p.phc_id = r.phc_id
+            WHERE 1=1
+        """
         params = []
         if state_id:
-            query += " AND state_id = ?"
+            query += " AND p.state_id = ?"
             params.append(state_id)
         if district_id:
-            query += " AND district_id = ?"
+            query += " AND p.district_id = ?"
             params.append(district_id)
-        query += " ORDER BY phc_id ASC LIMIT ? OFFSET ?"
+        query += " ORDER BY p.phc_id ASC LIMIT ? OFFSET ?"
         params.extend([limit, offset])
         cursor.execute(query, params)
         return rows_to_dicts(cursor)
@@ -582,14 +749,22 @@ def get_recommendations(
         """
         params = []
         if status:
-            query += " AND t.status = ?"
-            params.append(status)
+            if status.upper() in ("ACTIVE", "RECOMMENDED"):
+                query += " AND t.status IN ('RECOMMENDED', 'REQUESTED')"
+            elif "," in status:
+                statuses = [s.strip().upper() for s in status.split(",")]
+                placeholders = ",".join(["?"] * len(statuses))
+                query += f" AND t.status IN ({placeholders})"
+                params.extend(statuses)
+            elif status.upper() != "ALL":
+                query += " AND t.status = ?"
+                params.append(status)
         if priority:
             query += " AND t.priority = ?"
             params.append(priority)
             
         # Scope enforcement: If logged-in user is a PHC operator, restrict to their facility transfers
-        if user and user.get("role") == "phc_operator":
+        if user and isinstance(user, dict) and user.get("role") == "phc_operator":
             query += " AND (t.source_phc = ? OR t.destination_phc = ?)"
             params.extend([user["phc_id"], user["phc_id"]])
         elif phc_id:
@@ -793,6 +968,9 @@ def update_phc_inventory(req: InventoryUpdateRequest, user: dict = Depends(get_c
         """, (rec, disp, dam, new_closing, lead_time, prev_dict["id"]))
         conn.commit()
         
+        # Real-time Invariant & Risk Re-calibration
+        sync_phc_inventory_risk(conn, req.phc_id, req.medicine_id)
+        
         new_dict = {
             "closing_stock": new_closing,
             "received_quantity": rec,
@@ -813,7 +991,27 @@ def update_phc_inventory(req: InventoryUpdateRequest, user: dict = Depends(get_c
             new_value=new_dict,
             phc_id=req.phc_id
         )
-        return {"status": "SUCCESS", "message": "Inventory successfully updated", "audit_log_id": log_id, "updated": new_dict}
+        
+        # Fetch names for live telemetry broadcast
+        cursor.execute("SELECT phc_name FROM phcs WHERE phc_id = ?", (req.phc_id,))
+        p_row = cursor.fetchone()
+        p_name = p_row[0] if p_row else req.phc_id
+        cursor.execute("SELECT generic_name FROM medicines WHERE medicine_id = ?", (req.medicine_id,))
+        m_row = cursor.fetchone()
+        m_name = m_row[0] if m_row else req.medicine_id
+
+        broadcaster.publish_event({
+            "type": "DATA_UPDATED",
+            "event": "INVENTORY_UPDATE",
+            "phc_id": req.phc_id,
+            "phc_name": p_name,
+            "medicine_id": req.medicine_id,
+            "medicine_name": m_name,
+            "closing_stock": new_closing,
+            "summary": f"{p_name} updated {m_name} stock to {new_closing} units."
+        })
+
+        return {"status": "SUCCESS", "message": "Inventory successfully updated in real time", "audit_log_id": log_id, "updated": new_dict}
 
 @app.post("/api/phc/demand/update")
 def update_phc_demand(req: DemandUpdateRequest, user: dict = Depends(get_current_user)):
@@ -832,6 +1030,11 @@ def update_phc_demand(req: DemandUpdateRequest, user: dict = Depends(get_current
             """, (req.opd_patients, req.ipd_patients, req.emergency_patients, req.disease_index, prev_dict["id"]))
         conn.commit()
         
+        # Recalculate risks for medicines at this facility
+        cursor.execute("SELECT DISTINCT medicine_id FROM inventory WHERE phc_id = ?", (req.phc_id,))
+        for m_row in cursor.fetchall()[:20]:
+            sync_phc_inventory_risk(conn, req.phc_id, m_row[0])
+        
         new_dict = req.dict()
         log_id = record_audit_log(
             conn, user,
@@ -841,7 +1044,22 @@ def update_phc_demand(req: DemandUpdateRequest, user: dict = Depends(get_current
             new_value=new_dict,
             phc_id=req.phc_id
         )
-        return {"status": "SUCCESS", "message": "Clinical demand updated", "audit_log_id": log_id, "updated": new_dict}
+
+        cursor.execute("SELECT phc_name FROM phcs WHERE phc_id = ?", (req.phc_id,))
+        p_row = cursor.fetchone()
+        p_name = p_row[0] if p_row else req.phc_id
+
+        broadcaster.publish_event({
+            "type": "DATA_UPDATED",
+            "event": "DEMAND_UPDATE",
+            "phc_id": req.phc_id,
+            "phc_name": p_name,
+            "opd_patients": req.opd_patients,
+            "disease_index": req.disease_index,
+            "summary": f"{p_name} updated patient footfall: OPD {req.opd_patients}, Disease Index {req.disease_index}."
+        })
+
+        return {"status": "SUCCESS", "message": "Clinical demand updated in real time", "audit_log_id": log_id, "updated": new_dict}
 
 @app.post("/api/phc/beds/update")
 def update_phc_beds(req: BedsUpdateRequest, user: dict = Depends(get_current_user)):
@@ -863,6 +1081,9 @@ def update_phc_beds(req: BedsUpdateRequest, user: dict = Depends(get_current_use
                 SET bed_capacity = ?, beds_occupied = ?, beds_available = ?, occupancy_rate = ?
                 WHERE id = ?
             """, (cap, occ, avail, occ_rate, prev_dict["id"]))
+        
+        # Keep phcs table bed_capacity synchronized across all operational views
+        cursor.execute("UPDATE phcs SET bed_capacity = ? WHERE phc_id = ?", (cap, req.phc_id))
         conn.commit()
         
         new_dict = {"bed_capacity": cap, "beds_occupied": occ, "beds_available": avail, "occupancy_rate": occ_rate}
@@ -874,7 +1095,22 @@ def update_phc_beds(req: BedsUpdateRequest, user: dict = Depends(get_current_use
             new_value=new_dict,
             phc_id=req.phc_id
         )
-        return {"status": "SUCCESS", "message": "Bed occupancy updated", "audit_log_id": log_id, "updated": new_dict}
+
+        cursor.execute("SELECT phc_name FROM phcs WHERE phc_id = ?", (req.phc_id,))
+        p_row = cursor.fetchone()
+        p_name = p_row[0] if p_row else req.phc_id
+
+        broadcaster.publish_event({
+            "type": "DATA_UPDATED",
+            "event": "BEDS_UPDATE",
+            "phc_id": req.phc_id,
+            "phc_name": p_name,
+            "beds_occupied": occ,
+            "bed_capacity": cap,
+            "summary": f"{p_name} updated bed occupancy: {occ}/{cap} beds ({round(occ_rate*100)}%)."
+        })
+
+        return {"status": "SUCCESS", "message": "Bed occupancy updated in real time", "audit_log_id": log_id, "updated": new_dict}
 
 @app.post("/api/phc/staff/update")
 def update_phc_staff(req: StaffUpdateRequest, user: dict = Depends(get_current_user)):
@@ -914,7 +1150,22 @@ def update_phc_staff(req: StaffUpdateRequest, user: dict = Depends(get_current_u
             new_value=new_dict,
             phc_id=req.phc_id
         )
-        return {"status": "SUCCESS", "message": "Staff attendance logged", "audit_log_id": log_id, "updated": new_dict}
+
+        cursor.execute("SELECT phc_name FROM phcs WHERE phc_id = ?", (req.phc_id,))
+        p_row = cursor.fetchone()
+        p_name = p_row[0] if p_row else req.phc_id
+
+        broadcaster.publish_event({
+            "type": "DATA_UPDATED",
+            "event": "STAFF_UPDATE",
+            "phc_id": req.phc_id,
+            "phc_name": p_name,
+            "doctors_present": req.doctors_present,
+            "nurses_present": req.nurses_present,
+            "summary": f"{p_name} logged staff presence: {req.doctors_present} doctors, {req.nurses_present} nurses."
+        })
+
+        return {"status": "SUCCESS", "message": "Staff attendance logged in real time", "audit_log_id": log_id, "updated": new_dict}
 
 @app.post("/api/phc/tickets")
 def create_phc_ticket(req: TicketCreateRequest, user: dict = Depends(get_current_user)):
@@ -1035,6 +1286,18 @@ def request_lateral_transfer(req: TransferCreateRequest, user: dict = Depends(ge
             new_value={"transfer_id": trf_id, **req.dict()},
             phc_id=req.destination_phc
         )
+        
+        broadcaster.publish_event({
+            "type": "DATA_UPDATED",
+            "event": "TRANSFER_REQUESTED",
+            "transfer_id": trf_id,
+            "source_phc": req.source_phc,
+            "destination_phc": req.destination_phc,
+            "medicine_id": req.medicine_id,
+            "quantity": req.quantity,
+            "summary": f"Lateral transfer of {req.quantity} units requested from {req.source_phc} to {req.destination_phc}."
+        })
+
         return {"status": "SUCCESS", "transfer_id": trf_id, "message": "Lateral transfer requested", "audit_log_id": log_id}
 
 @app.post("/api/transfers/{transfer_id}/action")
@@ -1058,8 +1321,28 @@ def action_transfer(transfer_id: str, req: TransferActionRequest, user: dict = D
             new_status = "REJECTED"
         elif act == "DISPATCH":
             new_status = "IN_TRANSIT"
+            # Deduct dispatched units from source PHC's latest stock
+            cursor.execute("""
+                UPDATE inventory
+                SET dispensed_quantity = dispensed_quantity + ?,
+                    closing_stock = MAX(0, closing_stock - ?)
+                WHERE phc_id = ? AND medicine_id = ?
+                  AND date = (SELECT MAX(date) FROM inventory WHERE phc_id = ? AND medicine_id = ?)
+            """, (t_dict["quantity"], t_dict["quantity"], t_dict["source_phc"], t_dict["medicine_id"], t_dict["source_phc"], t_dict["medicine_id"]))
+            conn.commit()
+            sync_phc_inventory_risk(conn, t_dict["source_phc"], t_dict["medicine_id"])
         elif act == "RECEIVE":
             new_status = "COMPLETED"
+            # Credit received units into destination PHC's latest stock
+            cursor.execute("""
+                UPDATE inventory
+                SET received_quantity = received_quantity + ?,
+                    closing_stock = closing_stock + ?
+                WHERE phc_id = ? AND medicine_id = ?
+                  AND date = (SELECT MAX(date) FROM inventory WHERE phc_id = ? AND medicine_id = ?)
+            """, (t_dict["quantity"], t_dict["quantity"], t_dict["destination_phc"], t_dict["medicine_id"], t_dict["destination_phc"], t_dict["medicine_id"]))
+            conn.commit()
+            sync_phc_inventory_risk(conn, t_dict["destination_phc"], t_dict["medicine_id"])
         else:
             raise HTTPException(status_code=400, detail="Invalid action: choose APPROVE, REJECT, DISPATCH, or RECEIVE")
             
@@ -1075,6 +1358,20 @@ def action_transfer(transfer_id: str, req: TransferActionRequest, user: dict = D
             new_value={"status": new_status, "notes": req.notes},
             phc_id=user.get("phc_id")
         )
+
+        broadcaster.publish_event({
+            "type": "DATA_UPDATED",
+            "event": f"TRANSFER_{act}",
+            "transfer_id": transfer_id,
+            "action": act,
+            "status": new_status,
+            "source_phc": t_dict["source_phc"],
+            "destination_phc": t_dict["destination_phc"],
+            "medicine_id": t_dict["medicine_id"],
+            "quantity": t_dict["quantity"],
+            "summary": f"Transfer {transfer_id} marked as {new_status}."
+        })
+
         return {"status": "SUCCESS", "transfer_id": transfer_id, "new_status": new_status, "audit_log_id": log_id}
 
 # -----------------
@@ -1181,6 +1478,49 @@ def get_demand_series(phc_id: Optional[str] = None, district_id: Optional[str] =
         return list(reversed(rows))
 
 # -----------------
+# 5B. Real-time Telemetry Event Stream (Server-Sent Events)
+# -----------------
+@app.get("/api/realtime/stream")
+async def realtime_stream(request: Request):
+    """Server-Sent Events (SSE) stream for real-time telemetry updates across all connected clients."""
+    q = broadcaster.subscribe()
+
+    async def event_generator():
+        try:
+            init_msg = json.dumps({
+                "type": "CONNECTED",
+                "version": broadcaster.version,
+                "timestamp": datetime.datetime.now().isoformat()
+            })
+            yield f"data: {init_msg}\n\n"
+            while True:
+                if await request.is_disconnected():
+                    break
+                try:
+                    event = await asyncio.wait_for(q.get(), timeout=12.0)
+                    yield f"data: {json.dumps(event)}\n\n"
+                except asyncio.TimeoutError:
+                    # Heartbeat comment to keep connection alive
+                    yield f": heartbeat {datetime.datetime.now().isoformat()}\n\n"
+        finally:
+            broadcaster.unsubscribe(q)
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache, no-transform",
+            "Connection": "keep-alive",
+            "Content-Type": "text/event-stream",
+            "X-Accel-Buffering": "no"
+        }
+    )
+
+@app.get("/api/realtime/status")
+def get_realtime_status():
+    return broadcaster.get_status()
+
+# -----------------
 # 6. Emergency Scenario Simulator
 # -----------------
 @app.get("/api/simulation/scenarios")
@@ -1194,7 +1534,56 @@ def get_scenarios():
 def trigger_simulation(req: SimulationRequest):
     try:
         result = run_emergency_scenario(req.scenario_id)
+        broadcaster.publish_event({
+            "type": "SIMULATION_COMPLETED",
+            "scenario_id": req.scenario_id,
+            "scenario_name": result.get("scenario_name", req.scenario_id),
+            "deltas": result.get("deltas", {}),
+            "summary": f"Emergency simulation {result.get('scenario_name', req.scenario_id)} triggered network shock."
+        })
         return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/simulation/custom")
+def trigger_custom_simulation(req: CustomSimulationRequest):
+    """Executes a custom emergency disaster simulation with user-defined parameters."""
+    try:
+        from backend.simulation.emergency_engine import run_custom_emergency_scenario
+        result = run_custom_emergency_scenario(
+            name=req.name,
+            description=req.description,
+            demand_factor=req.demand_factor,
+            disease_factor=req.disease_factor,
+            lead_time_multiplier=req.lead_time_multiplier,
+            temperature_surge=req.temperature_surge,
+            rainfall_surge=req.rainfall_surge,
+            affected_districts=req.affected_districts
+        )
+        broadcaster.publish_event({
+            "type": "SIMULATION_COMPLETED",
+            "scenario_id": result["scenario_id"],
+            "scenario_name": req.name,
+            "deltas": result.get("deltas", {}),
+            "summary": f"Custom Emergency Simulation '{req.name}' executed."
+        })
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/simulation/reset")
+def reset_simulation_to_baseline():
+    """Resets operational state back to Normal Baseline."""
+    try:
+        result = run_emergency_scenario("SCN_NORMAL")
+        broadcaster.publish_event({
+            "type": "SIMULATION_COMPLETED",
+            "scenario_id": "SCN_NORMAL",
+            "scenario_name": "Normal Baseline",
+            "deltas": result.get("deltas", {}),
+            "summary": "Operational network reset to Normal Baseline."
+        })
+        return {"status": "SUCCESS", "message": "Network restored to Normal Baseline", "result": result}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -1208,7 +1597,6 @@ def get_federated_status():
         cursor.execute("SELECT * FROM federated_rounds ORDER BY round_number ASC")
         rounds = rows_to_dicts(cursor)
         
-        # Load summary file if present
         summary_path = "data/processed/federated_summary.json"
         summary = {}
         if os.path.exists(summary_path):
@@ -1228,19 +1616,25 @@ def get_federated_status():
 def trigger_federated_training(rounds: int = 3):
     try:
         history = run_federated_rounds(rounds=rounds)
+        broadcaster.publish_event({
+            "type": "DATA_UPDATED",
+            "event": "FEDERATED_ROUNDS_COMPLETED",
+            "rounds": rounds,
+            "summary": f"Completed {rounds} federated learning rounds with edge aggregation."
+        })
         return {"status": "SUCCESS", "message": f"Completed {rounds} federated learning rounds.", "history": history}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 # -----------------
-# 8. Google Gemini / Vertex AI Integration
+# 8. Grounded AI Control Tower (Dual Google Gemini & OpenAI Engine)
 # -----------------
 @app.post("/api/gemini/brief")
-def get_operational_brief(req: GeminiBriefRequest):
+@app.post("/api/llm/brief")
+def get_operational_brief(req: GeminiBriefRequest, request: Request):
     with get_db() as conn:
         cursor = conn.cursor()
         
-        # Build structured context strictly from current database values
         where_clause = "WHERE 1=1"
         params = []
         loc_str = "National Public Health Network"
@@ -1289,46 +1683,60 @@ def get_operational_brief(req: GeminiBriefRequest):
             "recommendations": recommendations
         }
         
-        brief = gemini_service.generate_operations_brief(context)
+        header_gemini = request.headers.get("X-Gemini-API-Key")
+        header_openai = request.headers.get("X-OpenAI-API-Key")
+        header_provider = request.headers.get("X-LLM-Provider")
+        header_model = request.headers.get("X-LLM-Model")
+        
+        api_key = req.api_key or (header_openai if header_provider == "openai" else header_gemini) or header_gemini or header_openai
+        provider = req.provider or header_provider
+        model = req.model or header_model
+        
+        brief = gemini_service.generate_operations_brief(context, api_key=api_key, provider=provider, model=model)
         return brief
 
+@app.get("/api/gemini/status")
+@app.get("/api/llm/status")
+def get_llm_status():
+    """Returns the operational status of Google Gemini and OpenAI providers."""
+    return gemini_service.get_status()
+
 @app.post("/api/gemini/ask")
-def ask_control_tower(req: GeminiAskRequest):
-    with get_db() as conn:
-        cursor = conn.cursor()
-        
-        # Retrieve relevant context
-        cursor.execute("""
-            SELECT r.phc_id, p.phc_name, m.generic_name, r.severity, r.days_of_stock,
-                   i.closing_stock, i.lead_time_days, f.predicted_demand
-            FROM stockout_risks r
-            JOIN phcs p ON r.phc_id = p.phc_id
-            JOIN medicines m ON r.medicine_id = m.medicine_id
-            JOIN inventory i ON r.phc_id = i.phc_id AND r.medicine_id = i.medicine_id AND i.date = (SELECT MAX(date) FROM inventory)
-            LEFT JOIN forecasts f ON r.phc_id = f.phc_id AND r.medicine_id = f.medicine_id
-            ORDER BY r.risk_probability DESC LIMIT 8
-        """)
-        top_risks = rows_to_dicts(cursor)
-        
-        cursor.execute("""
-            SELECT t.transfer_id, t.source_phc, t.destination_phc, m.generic_name,
-                   t.quantity, t.estimated_transport_distance, t.estimated_lead_time,
-                   t.source_surplus, t.destination_need, t.priority
-            FROM transfers t
-            JOIN medicines m ON t.medicine_id = m.medicine_id
-            WHERE t.status = 'RECOMMENDED'
-            ORDER BY CASE t.priority WHEN 'CRITICAL' THEN 1 ELSE 2 END LIMIT 5
-        """)
-        recommendations = rows_to_dicts(cursor)
-        
-        context = {
-            "top_risks": top_risks,
-            "recommendations": recommendations,
-            "current_date": datetime.datetime.now().strftime("%Y-%m-%d")
-        }
-        
-        response = gemini_service.ask_control_tower(req.question, context)
-        return response
+@app.post("/api/llm/ask")
+def ask_control_tower(req: GeminiAskRequest, request: Request):
+    header_gemini = request.headers.get("X-Gemini-API-Key")
+    header_openai = request.headers.get("X-OpenAI-API-Key")
+    header_provider = request.headers.get("X-LLM-Provider")
+    header_model = request.headers.get("X-LLM-Model")
+
+    # Determine provider and key
+    provider = req.provider or header_provider
+    api_key = req.api_key
+    if not api_key:
+        if provider == "openai":
+            api_key = header_openai
+        elif provider == "gemini":
+            api_key = header_gemini
+        else:
+            api_key = header_gemini or header_openai
+
+    model = req.model or header_model
+
+    filters = {
+        "state_id": req.state_id,
+        "district_id": req.district_id,
+        "phc_id": req.phc_id
+    }
+    
+    response = gemini_service.ask_control_tower(
+        question=req.question,
+        conversation_history=req.conversation_history,
+        api_key=api_key,
+        filters=filters,
+        provider=provider,
+        model=model
+    )
+    return response
 
 # -----------------
 # 9. Provenance & Model Metrics Transparency
