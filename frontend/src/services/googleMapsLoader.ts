@@ -4,7 +4,7 @@
  * asynchronous script injection, authentication error interceptors, and reactive key updates.
  */
 
-import { GOOGLE_MAPS_API_KEY } from '../config/mapsKey';
+
 
 const STORAGE_KEY = 'medicus_google_maps_api_key';
 const KEY_CHANGE_EVENT = 'medicus_google_maps_key_changed';
@@ -22,9 +22,7 @@ let currentLoadedKey: string | null = null;
 export const getGoogleMapsApiKey = (): string => {
   if (typeof window === 'undefined') return '';
   // 1. In-code configuration file (strictly excluded by .gitignore)
-  if (GOOGLE_MAPS_API_KEY && GOOGLE_MAPS_API_KEY.trim()) {
-    return GOOGLE_MAPS_API_KEY.trim();
-  }
+
   // 2. Vite environment variable from .env (strictly excluded by .gitignore)
   const envKey = import.meta.env.VITE_GOOGLE_MAPS_API_KEY;
   if (envKey && typeof envKey === 'string' && envKey.trim()) {
