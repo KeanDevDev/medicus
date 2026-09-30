@@ -1,11 +1,12 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { 
   Search, Bell, Sparkles, HelpCircle, 
-  ChevronDown, CheckCircle2, MoreHorizontal,
+  ChevronDown, CheckCircle2,
   ChevronLeft, ChevronRight, Menu, X, LogOut
 } from 'lucide-react';
 import { Language, getTranslation } from '../i18n/translations';
 import { UserRole } from '../types';
+import medicusLogo from '../assets/medi.png';
 
 export type MedicusNavKey = 
   | 'national' 
@@ -63,7 +64,6 @@ export const MedicusNavbar: React.FC<Props> = ({
   currentUser,
   onLogout,
 }) => {
-  const [moreMenuOpen, setMoreMenuOpen] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const t = getTranslation(currentLang);
 
@@ -121,7 +121,7 @@ export const MedicusNavbar: React.FC<Props> = ({
     { key: 'capacity', label: t.nav_capacity },
     { key: 'emergency', label: t.nav_emergency },
     { key: 'ml_studio', label: t.nav_ml_studio },
-    { key: 'copilot', label: t.nav_copilot, highlight: true },
+    { key: 'copilot', label: t.nav_copilot },
   ];
 
   const secondaryNavItems: { key: MedicusNavKey; label: string; highlight?: boolean }[] = [
@@ -132,8 +132,6 @@ export const MedicusNavbar: React.FC<Props> = ({
     { key: 'transparency', label: t.nav_transparency },
     { key: 'activity', label: t.nav_activity },
   ];
-
-  const isSecondaryActive = secondaryNavItems.some((item) => item.key === activeTab);
 
   useEffect(() => {
     checkScroll();
@@ -198,19 +196,9 @@ export const MedicusNavbar: React.FC<Props> = ({
           {/* Brand Left */}
           <div 
             onClick={() => onTabChange('national')}
-            className="flex items-center gap-2 cursor-pointer flex-shrink-0 select-none"
+            className="flex items-center cursor-pointer flex-shrink-0 select-none"
           >
-            <div className="w-8 h-8 rounded-full bg-[#007AFF] flex items-center justify-center text-white shadow-xs">
-              <span className="font-bold text-sm tracking-tight">M</span>
-            </div>
-            <div>
-              <div className="text-sm font-bold tracking-tight text-[#1D1D1F]">
-                {t.app_name}
-              </div>
-              <div className="text-[10px] font-medium text-black/40 tracking-wide uppercase -mt-0.5 hidden xs:block">
-                {t.app_subtitle}
-              </div>
-            </div>
+            <img src={medicusLogo} alt="Medicus" className="w-24 h-14 object-contain object-left" />
           </div>
 
           {/* Desktop Center Flowing Pill Navigation (Hidden on mobile < md) */}
@@ -259,7 +247,6 @@ export const MedicusNavbar: React.FC<Props> = ({
                         return;
                       }
                       onTabChange(item.key);
-                      setMoreMenuOpen(false);
                     }}
                     className={`px-3 py-1.5 rounded-full text-xs font-semibold transition-all whitespace-nowrap cursor-pointer flex-shrink-0 ${
                       isActive
@@ -275,47 +262,6 @@ export const MedicusNavbar: React.FC<Props> = ({
                 );
               })}
 
-              {/* More Navigation Dropdown for Regional Hierarchy & Deep Operations */}
-              <div className="relative flex-shrink-0">
-                <button
-                  onClick={() => setMoreMenuOpen(!moreMenuOpen)}
-                  className={`px-2.5 py-1.5 rounded-full text-xs font-semibold transition-all flex items-center gap-1 cursor-pointer ${
-                    isSecondaryActive
-                      ? 'bg-black/10 text-black font-bold'
-                      : 'text-black/60 hover:text-black hover:bg-black/5'
-                  }`}
-                  title="More operational tools"
-                >
-                  <MoreHorizontal className="w-3.5 h-3.5" />
-                  <ChevronDown className="w-2.5 h-2.5 opacity-60" />
-                </button>
-
-                {moreMenuOpen && (
-                  <div className="absolute right-0 mt-2 w-52 bg-white/95 backdrop-blur-md rounded-2xl shadow-xl border border-black/6 p-1.5 text-xs z-50">
-                    <div className="px-3 py-1 text-[10px] font-bold text-black/40 uppercase tracking-wider">
-                      Regional & Deep Tools
-                    </div>
-                    {secondaryNavItems.map((item) => {
-                      const isActive = activeTab === item.key;
-                      return (
-                        <button
-                          key={item.key}
-                          onClick={() => {
-                            onTabChange(item.key);
-                            setMoreMenuOpen(false);
-                          }}
-                          className={`w-full text-left px-3 py-2 rounded-xl transition-colors flex items-center justify-between ${
-                            isActive ? 'bg-[#007AFF]/10 text-[#007AFF] font-bold' : 'text-black/70 hover:bg-black/5'
-                          }`}
-                        >
-                          <span>{item.label}</span>
-                          {isActive && <CheckCircle2 className="w-3.5 h-3.5 text-[#007AFF]" />}
-                        </button>
-                      );
-                    })}
-                  </div>
-                )}
-              </div>
             </nav>
 
             {/* Desktop Right Subtle Fade Mask */}

@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { motion, AnimatePresence } from 'framer-motion';
 import { MedicusNavbar, MedicusNavKey } from './components/MedicusNavbar';
 import { DetailDrawers } from './components/DetailDrawers';
 import { SpotlightSearchModal } from './components/SpotlightSearchModal';
@@ -7,6 +8,7 @@ import { GooglePhcMap } from './components/GooglePhcMap';
 import { Language, getTranslation } from './i18n/translations';
 import { UserRole, DrawerState, NotificationItem, TransferRow } from './types';
 import { api } from './services/api';
+import { realtime } from './services/realtime';
 import { AuthProvider, useAuth } from './context/AuthContext';
 
 // Views
@@ -53,6 +55,12 @@ function MedicusAppContent() {
   // Telemetry notifications
   const [notifications, setNotifications] = useState<NotificationItem[]>([]);
   const [refreshKey, setRefreshKey] = useState(0);
+  const [liveToast, setLiveToast] = useState<{
+    id: string;
+    title: string;
+    message: string;
+    type?: string;
+  } | null>(null);
 
   const t = getTranslation(currentLang);
 
@@ -77,6 +85,65 @@ function MedicusAppContent() {
     }
   };
 
+  const handleRefresh = () => {
+    setRefreshKey((prev) => prev + 1);
+  };
+
+  // Real-time Telemetry Zero-Latency Sync across all tabs and clients
+  useEffect(() => {
+    realtime.connect();
+
+    const unsubscribe = realtime.subscribe((event) => {
+      // Trigger full reactive reload of dashboard tabs and state
+      handleRefresh();
+
+      let title = 'Network Update';
+      let message = event.summary || 'Operational update received.';
+
+      if (event.type === 'DATA_UPDATED') {
+        if (event.event === 'INVENTORY_UPDATED') {
+          title = '⚡ PHC Inventory Recalibrated';
+          message = event.summary || `Stock updated for ${event.medicine_name || event.medicine_id} at ${event.phc_name || event.phc_id}. Days of stock and stockout risks recomputed network-wide.`;
+        } else if (event.event === 'DEMAND_UPDATED') {
+          title = '📈 Clinical Intake Surge';
+          message = event.summary || `OPD/IPD volume updated at ${event.phc_id}. Dynamic safety stock recomputed.`;
+        } else if (event.event === 'BEDS_UPDATED') {
+          title = '🛏️ Bed Capacity Shift';
+          message = event.summary || `Bed occupancy updated at ${event.phc_id}.`;
+        } else if (event.event === 'STAFF_UPDATED') {
+          title = '👨‍⚕️ Workforce Status';
+          message = event.summary || `Staff attendance updated at ${event.phc_id}.`;
+        } else if (event.event?.startsWith('TRANSFER_')) {
+          title = '📦 Inter-PHC Redistribution';
+          message = event.summary || `Lateral supply transfer status updated.`;
+        }
+      } else if (event.type === 'SIMULATION_COMPLETED') {
+        title = '🚨 Emergency Stress Simulation';
+        message = event.summary || `Crisis scenario executed across target facilities.`;
+      } else if (event.type === 'SIMULATION_RESET') {
+        title = '🔄 Network Reset to Baseline';
+        message = 'Operational baselines restored across all 208 PHCs.';
+      }
+
+      const toastId = String(Date.now());
+      setLiveToast({
+        id: toastId,
+        title,
+        message,
+        type: event.type
+      });
+
+      // Auto-dismiss after 4.5 seconds
+      setTimeout(() => {
+        setLiveToast((curr) => (curr && curr.id === toastId ? null : curr));
+      }, 4500);
+    });
+
+    return () => {
+      unsubscribe();
+    };
+  }, []);
+
   useEffect(() => {
     if (!user) return;
     loadNotifications();
@@ -85,10 +152,6 @@ function MedicusAppContent() {
     }, 5000);
     return () => clearInterval(interval);
   }, [user, refreshKey]);
-
-  const handleRefresh = () => {
-    setRefreshKey((prev) => prev + 1);
-  };
 
   const handleSelectState = (stateId: string) => {
     setSelectedStateId(stateId);
@@ -335,6 +398,35 @@ function MedicusAppContent() {
           setIsJudgeTourOpen(false);
         }}
       />
+
+      {/* Real-time Telemetry Live Floating Toast */}
+      <AnimatePresence>
+        {liveToast && (
+          <motion.div
+            initial={{ opacity: 0, y: 30, scale: 0.94 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: 20, scale: 0.94 }}
+            className="fixed bottom-6 right-6 z-50 max-w-sm w-full bg-white/95 backdrop-blur-md rounded-2xl p-4 shadow-2xl border border-black/10 flex items-start gap-3 select-none"
+          >
+            <div className="relative flex h-3 w-3 mt-1 flex-shrink-0">
+              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+              <span className="relative inline-flex rounded-full h-3 w-3 bg-emerald-500"></span>
+            </div>
+            <div className="flex-1 space-y-0.5">
+              <div className="flex items-center justify-between">
+                <h4 className="text-xs font-bold text-[#1D1D1F] tracking-tight">{liveToast.title}</h4>
+                <button
+                  onClick={() => setLiveToast(null)}
+                  className="text-gray-400 hover:text-gray-700 text-xs px-1 cursor-pointer"
+                >
+                  ✕
+                </button>
+              </div>
+              <p className="text-[11px] text-gray-600 leading-snug">{liveToast.message}</p>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       {/* Minimal Footer */}
       <footer className="mt-auto border-t border-black/5 bg-[#F5F5F7] py-6 px-4 text-xs text-black/40">

@@ -16,33 +16,30 @@ from typing import Dict, Any, Optional, Tuple, List
 
 # Standard Clinical Safety Disclaimer
 CLINICAL_SAFETY_MESSAGE = (
-    "⚠️ **Medicus Clinical Safety Guardrail**\n\n"
+    "⚠️ Medicus Clinical Safety Guardrail\n\n"
     "Medicus is an operational management and supply chain platform designed for public healthcare facilities, "
-    "Primary Health Centres (PHCs), and health administrators. It is **not** a licensed clinical diagnosis or "
+    "Primary Health Centres (PHCs), and health administrators. It is not a licensed clinical diagnosis or "
     "patient treatment tool.\n\n"
-    "**For personal medical advice, symptom evaluation, or medication prescriptions, please consult a qualified "
-    "physician or visit your nearest Primary Health Centre (PHC) immediately.**"
+    "For personal medical advice, symptom evaluation, or medication prescriptions, please consult a qualified "
+    "physician or visit your nearest Primary Health Centre (PHC) immediately."
 )
 
 # Standard Out of Scope Notice
 OUT_OF_SCOPE_MESSAGE = (
-    "🛡️ **Medicus Control Tower Boundary Notice: Out of Scope**\n\n"
-    "I am the **Medicus Operational Health Intelligence Assistant**, specialized exclusively in public healthcare "
-    "operations, facility telemetry, drug inventory monitoring, and redistribution logistics for India's Primary Health Centres.\n\n"
-    "I cannot assist with queries unrelated to the Medicus platform.\n\n"
-    "**You can ask me about:**\n"
-    "- 📦 **Medicine Stock & Shortages:** E.g., *'Why is Paracetamol low in Pune?'* or *'Show critical stockout risks.'*\n"
-    "- 🚚 **Redistribution Transfers:** E.g., *'Summarize pending emergency transfers'* or *'How are donor PHCs chosen?'*\n"
-    "- 🏥 **Facility & Clinical Capacity:** E.g., *'Check bed occupancy and staff attendance in Belagavi.'*\n"
-    "- 🌧️ **Emergency Simulations:** E.g., *'Simulate flood impact on coastal PHCs.'*\n"
-    "- 🤖 **Platform & AI Architecture:** E.g., *'Explain the demand forecasting model or FedAvg federated rounds.'*"
+    "I am the Medicus operations assistant, specialized in healthcare facility operations, "
+    "medicine inventory tracking, and redistribution logistics for Primary Health Centres.\n\n"
+    "I can help you with:\n"
+    "• 📦 Medicine Stock & Shortages: E.g., 'Why is Paracetamol low in Pune?' or 'Show critical stockout risks.'\n"
+    "• 🚚 Redistribution Transfers: E.g., 'Summarize pending emergency transfers' or 'How are donor PHCs chosen?'\n"
+    "• 🏥 Facility & Clinical Capacity: E.g., 'Check bed occupancy and staff attendance in Belagavi.'\n"
+    "• 🌧️ Emergency Simulations: E.g., 'Simulate flood impact on coastal PHCs.'\n\n"
+    "How can I assist with your facility operations?"
 )
 
 # Injection / Jailbreak Refusal
 INJECTION_REFUSAL_MESSAGE = (
-    "🛡️ **Medicus Security Guardrail: System Policy Override Blocked**\n\n"
-    "System override directives, roleplay jailbreaks, or out-of-boundary instructions are strictly restricted. "
-    "I operate exclusively under the verified operational data provenance policy of the Medicus Public Health Grid."
+    "I am here to assist with Medicus healthcare operations, inventory, and facility logistics. "
+    "Please let me know how I can help with your public health operations."
 )
 
 # Regex patterns for clinical diagnosis / personal medical advice
@@ -210,12 +207,15 @@ STRICT BOUNDARY & OPERATIONAL GUARDRAILS:
 
     @staticmethod
     def sanitize_output(text: str) -> str:
-        """Ensures that no clinical advice slips through without the required disclaimer."""
-        lower_text = text.lower()
+        """Ensures that no clinical advice slips through without the required disclaimer, and removes markdown asterisks."""
+        if not text:
+            return ""
+        clean_text = text.replace("**", "").replace("*", "")
+        lower_text = clean_text.lower()
         clinical_triggers = ["take this medicine", "you should take", "recommended dosage for you", "consulting a doctor is recommended"]
-        if any(trig in lower_text for trig in clinical_triggers) and "Medicus is an operational management" not in text:
-            return text + "\n\n---\n*Notice: Medicus is a logistics management platform and does not provide clinical medical advice.*"
-        return text
+        if any(trig in lower_text for trig in clinical_triggers) and "Medicus is an operational management" not in clean_text:
+            return clean_text + "\n\n---\nNotice: Medicus is a logistics management platform and does not provide clinical medical advice."
+        return clean_text
 
 
 guardrail_manager = MedicusGuardrailManager()

@@ -10,6 +10,7 @@ import {
   AlertCircle,
   CheckCircle2
 } from 'lucide-react';
+import medicusLogo from '../assets/medi.png';
 
 export const LoginView: React.FC = () => {
   const { login, loginWithPreset } = useAuth();
@@ -51,14 +52,8 @@ export const LoginView: React.FC = () => {
     <div className="min-h-screen bg-[#F5F5F7] text-[#1D1D1F] flex flex-col justify-between p-4 sm:p-8 selection:bg-blue-100">
       {/* Top Bar Branding */}
       <header className="max-w-6xl w-full mx-auto flex items-center justify-between py-2">
-        <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-2xl bg-gradient-to-tr from-[#0071E3] to-[#42A5F5] flex items-center justify-center text-white shadow-sm shadow-blue-500/20">
-            <Sparkles className="w-5 h-5 text-white" />
-          </div>
-          <div>
-            <h1 className="text-xl font-semibold tracking-tight text-[#1D1D1F]">MEDICUS</h1>
-            <p className="text-xs text-gray-500 font-medium">Federated Healthcare Operations & AI Control Tower</p>
-          </div>
+        <div className="flex items-center">
+          <img src={medicusLogo} alt="Medicus" className="w-36 h-24 object-contain object-left" />
         </div>
 
         <div className="hidden sm:flex items-center gap-2 px-3 py-1.5 bg-white/80 backdrop-blur rounded-full border border-gray-200/80 text-xs text-gray-600 shadow-2xs">

@@ -5,7 +5,6 @@ import {
   Send,
   ShieldCheck,
   AlertTriangle,
-  HelpCircle,
   Key,
   RotateCcw,
   CheckCircle,
@@ -14,7 +13,8 @@ import {
   Truck,
   Pill,
   CloudRain,
-  ShieldAlert
+  Cpu,
+  Bot
 } from 'lucide-react';
 import { api } from '../services/api';
 
@@ -24,6 +24,7 @@ interface ChatMessage {
   text: string;
   source?: string;
   model?: string;
+  provider?: string;
   isAiGenerated?: boolean;
   guardrailTriggered?: boolean;
   guardrailType?: string | null;
@@ -31,13 +32,35 @@ interface ChatMessage {
   timestamp: string;
 }
 
+const formatChatMessage = (text: string): string => {
+  if (!text) return '';
+  return text
+    .replace(/\*\*/g, '')
+    .replace(/\*/g, '')
+    .replace(/^#{1,6}\s+/gm, '')
+    .replace(/^(\s*)-\s+/gm, '$1• ');
+};
+
 export const CopilotView: React.FC = () => {
   const [query, setQuery] = useState('');
   const [loading, setLoading] = useState(false);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
-  const [geminiStatus, setGeminiStatus] = useState<any>(null);
+  const [llmStatus, setLlmStatus] = useState<any>(null);
   const [showKeyModal, setShowKeyModal] = useState(false);
-  const [customKey, setCustomKey] = useState(localStorage.getItem('medicus_gemini_api_key') || '');
+  
+  // Dual provider keys and settings
+  const [modalTab, setModalTab] = useState<'gemini' | 'openai'>('gemini');
+  const [geminiKey, setGeminiKey] = useState(localStorage.getItem('medicus_gemini_api_key') || '');
+  const [openaiKey, setOpenAIKey] = useState(localStorage.getItem('medicus_openai_api_key') || '');
+  const [activeProvider, setActiveProvider] = useState<'auto' | 'gemini' | 'openai'>(
+    (localStorage.getItem('medicus_llm_provider') as any) || 'auto'
+  );
+  const [geminiModel, setGeminiModel] = useState(
+    localStorage.getItem('medicus_gemini_model') || 'gemini-2.5-flash'
+  );
+  const [openaiModel, setOpenAIModel] = useState(
+    localStorage.getItem('medicus_openai_model') || 'gpt-4o-mini'
+  );
   const [activeCategory, setActiveCategory] = useState<'inventory' | 'transfers' | 'capacity' | 'scenarios' | 'guardrails'>('inventory');
   
   const chatEndRef = useRef<HTMLDivElement>(null);
@@ -50,11 +73,12 @@ export const CopilotView: React.FC = () => {
         {
           id: 'welcome-1',
           role: 'assistant',
-          text: `**Welcome to Medicus Grounded Assist** — the AI Control Tower for India's Public Health Grid.\n\nI answer operational queries grounded strictly in verified database telemetry (208 PHCs, drug stocks, redistribution transfers, bed capacity, and simulation models).\n\n🛡️ **Guardrail Active**: I do not dispense personal clinical medical advice or answer non-Medicus inquiries. You can test my boundaries anytime!`,
-          source: 'Medicus Control Tower',
-          model: 'Gemini Grounded Telemetry',
+          text: `Welcome to the Medicus Operations Assistant.\n\nI can help you review medicine inventory, track redistribution transfers, check facility capacity, and monitor operational readiness across Primary Health Centres.\n\nHow can I help you today?`,
+          source: 'Medicus Operations',
+          model: 'Operations Engine',
+          provider: 'local',
           isAiGenerated: false,
-          citations: ['SQLite Verified Telemetry', 'NLEM 2022 Gazette', 'Redistribution Optimizer'],
+          citations: [],
           timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
         }
       ]);
@@ -67,19 +91,34 @@ export const CopilotView: React.FC = () => {
 
   const fetchStatus = async () => {
     try {
-      const status = await api.getGeminiStatus();
-      setGeminiStatus(status);
+      const status = await api.getLlmStatus();
+      setLlmStatus(status);
     } catch {
-      setGeminiStatus({ is_configured: false, model: 'Local Engine' });
+      setLlmStatus({ is_configured: false, active_provider: 'local', model: 'Local Engine' });
     }
   };
 
-  const handleSaveKey = () => {
-    if (customKey.trim()) {
-      localStorage.setItem('medicus_gemini_api_key', customKey.trim());
+  const handleSaveKeys = () => {
+    if (geminiKey.trim()) {
+      localStorage.setItem('medicus_gemini_api_key', geminiKey.trim());
     } else {
       localStorage.removeItem('medicus_gemini_api_key');
     }
+
+    if (openaiKey.trim()) {
+      localStorage.setItem('medicus_openai_api_key', openaiKey.trim());
+    } else {
+      localStorage.removeItem('medicus_openai_api_key');
+    }
+
+    const providerToSet = modalTab === 'openai' && openaiKey.trim()
+      ? 'openai'
+      : (modalTab === 'gemini' && geminiKey.trim() ? 'gemini' : (geminiKey.trim() ? 'gemini' : (openaiKey.trim() ? 'openai' : 'auto')));
+    setActiveProvider(providerToSet);
+    localStorage.setItem('medicus_llm_provider', providerToSet);
+    localStorage.setItem('medicus_gemini_model', geminiModel);
+    localStorage.setItem('medicus_openai_model', openaiModel);
+
     setShowKeyModal(false);
     fetchStatus();
   };
@@ -104,8 +143,8 @@ export const CopilotView: React.FC = () => {
       'Which facilities have high bed occupancy?'
     ],
     scenarios: [
-      'What happens during a Flood Disruption scenario?',
-      'Simulate monsoon impact on coastal PHCs and drug demand',
+      'What happens during a Severe Heatwave scenario?',
+      'Simulate Super Cyclone landfall and coastal isolation',
       'Explain how acute canine bite surge affects rabies vaccine',
       'How does the emergency engine adjust lead times?'
     ],
@@ -133,23 +172,28 @@ export const CopilotView: React.FC = () => {
     setLoading(true);
 
     try {
-      // Build lightweight conversation history for multi-turn context
       const history = messages.slice(-4).map((m) => ({
         role: m.role,
         text: m.text
       }));
 
+      // Determine model and key to pass
+      const effectiveProvider = activeProvider;
+      const effectiveModel = activeProvider === 'openai' ? openaiModel : (activeProvider === 'gemini' ? geminiModel : undefined);
+
       const res = await api.askControlTower(q, {
         conversation_history: history,
-        api_key: customKey || undefined
+        provider: effectiveProvider,
+        model: effectiveModel
       });
 
       const assistantMsg: ChatMessage = {
         id: `asst-${Date.now()}`,
         role: 'assistant',
         text: res.answer || res.response || 'Operational analysis completed.',
-        source: res.source || (res.is_ai_generated ? 'Google Gemini 3.8 Flash' : 'Grounded Telemetry Engine'),
-        model: res.model || 'gemini-3.8-flash',
+        source: res.source || (res.provider === 'openai' ? `OpenAI (${res.model || openaiModel})` : (res.provider === 'gemini' ? `Google Gemini (${res.model || geminiModel})` : 'Grounded Telemetry Engine')),
+        model: res.model || (res.provider === 'openai' ? openaiModel : geminiModel),
+        provider: res.provider || (res.is_ai_generated ? (res.source?.includes('OpenAI') ? 'openai' : 'gemini') : 'local'),
         isAiGenerated: res.is_ai_generated,
         guardrailTriggered: res.guardrail_triggered,
         guardrailType: res.guardrail_type,
@@ -186,50 +230,74 @@ export const CopilotView: React.FC = () => {
     ]);
   };
 
+  const currentProviderDisplay = () => {
+    if (activeProvider === 'openai' || (activeProvider === 'auto' && openaiKey && !geminiKey)) {
+      return {
+        label: `OpenAI (${openaiModel})`,
+        icon: <Bot className="w-3.5 h-3.5 text-emerald-600" />,
+        badgeClass: 'bg-emerald-50 border-emerald-200 text-emerald-800'
+      };
+    }
+    if (activeProvider === 'gemini' || (activeProvider === 'auto' && geminiKey)) {
+      return {
+        label: `Gemini (${geminiModel})`,
+        icon: <Sparkles className="w-3.5 h-3.5 text-indigo-600" />,
+        badgeClass: 'bg-indigo-50 border-indigo-200 text-indigo-700'
+      };
+    }
+    if (llmStatus?.gemini?.is_configured) {
+      return {
+        label: `Gemini (${llmStatus.gemini.model})`,
+        icon: <Sparkles className="w-3.5 h-3.5 text-indigo-600" />,
+        badgeClass: 'bg-indigo-50 border-indigo-200 text-indigo-700'
+      };
+    }
+    if (llmStatus?.openai?.is_configured) {
+      return {
+        label: `OpenAI (${llmStatus.openai.model})`,
+        icon: <Bot className="w-3.5 h-3.5 text-emerald-600" />,
+        badgeClass: 'bg-emerald-50 border-emerald-200 text-emerald-800'
+      };
+    }
+    return {
+      label: 'Local Grounded Engine',
+      icon: <Database className="w-3.5 h-3.5 text-blue-600" />,
+      badgeClass: 'bg-blue-50 border-blue-200 text-blue-700'
+    };
+  };
+
+  const statusDisplay = currentProviderDisplay();
+
   return (
     <div className="max-w-4xl mx-auto space-y-6 pb-12">
       {/* Top Header & Status Banner */}
       <section className="bg-white/80 backdrop-blur-md rounded-2xl p-6 border border-black/5 shadow-xs flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
         <div className="flex items-center gap-3">
-          <div className="w-12 h-12 rounded-xl bg-gradient-to-tr from-indigo-600 to-blue-500 flex items-center justify-center text-white shadow-md">
-            <Sparkles className="w-6 h-6 animate-pulse" />
+          <div className="w-10 h-10 rounded-xl bg-[#007AFF] flex items-center justify-center text-white shadow-xs font-bold text-base">
+            M
           </div>
           <div>
-            <div className="flex items-center gap-2">
-              <h1 className="text-2xl font-bold text-[#1D1D1F] tracking-tight">MEDICUS Grounded Assist</h1>
-              <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold tracking-wide uppercase bg-emerald-100 text-emerald-800 border border-emerald-200 flex items-center gap-1">
-                <ShieldCheck className="w-3 h-3 text-emerald-600" /> Guardrails Active
-              </span>
-            </div>
-            <p className="text-xs text-black/60 font-medium">
-              India Public Health Supply Chain • Grounded Gemini Intelligence • Non-Hallucinatory
+            <h1 className="text-xl font-bold text-[#1D1D1F] tracking-tight">MEDICUS Operations Assistant</h1>
+            <p className="text-xs text-black/60 font-medium mt-0.5">
+              Healthcare operations and resource coordination for Primary Health Centres.
             </p>
           </div>
         </div>
 
-        {/* Engine Status & API Key Controls */}
+        {/* Engine Status & Controls */}
         <div className="flex items-center gap-2 flex-wrap">
-          <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-indigo-50 border border-indigo-200 text-indigo-700 text-xs font-semibold">
-            {geminiStatus?.is_configured ? (
-              <>
-                <Sparkles className="w-3.5 h-3.5 text-indigo-600" />
-                <span>Connected: {geminiStatus?.model || 'Gemini 3.8 Flash'}</span>
-              </>
-            ) : (
-              <>
-                <Database className="w-3.5 h-3.5 text-indigo-600" />
-                <span>Local Grounded Engine</span>
-              </>
-            )}
+          <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-black/10 bg-black/5 text-black/70 text-xs font-medium">
+            <Building2 className="w-3.5 h-3.5 text-blue-600" />
+            <span>Operations Engine Active</span>
           </div>
 
           <button
             onClick={() => setShowKeyModal(true)}
             className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-black/5 hover:bg-black/10 text-black/70 hover:text-black text-xs font-medium transition-colors cursor-pointer"
-            title="Configure Gemini API Key"
+            title="Configure API Settings"
           >
             <Key className="w-3.5 h-3.5" />
-            <span>API Key</span>
+            <span>API Settings</span>
           </button>
 
           <button
@@ -242,7 +310,7 @@ export const CopilotView: React.FC = () => {
         </div>
       </section>
 
-      {/* API Key Modal */}
+      {/* Dual Provider API Key Modal */}
       <AnimatePresence>
         {showKeyModal && (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-xs p-4">
@@ -250,48 +318,138 @@ export const CopilotView: React.FC = () => {
               initial={{ opacity: 0, scale: 0.95 }}
               animate={{ opacity: 1, scale: 1 }}
               exit={{ opacity: 0, scale: 0.95 }}
-              className="bg-white rounded-2xl p-6 max-w-md w-full shadow-2xl border border-black/10 space-y-4"
+              className="bg-white rounded-2xl p-6 max-w-lg w-full shadow-2xl border border-black/10 space-y-5"
             >
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
                   <Key className="w-5 h-5 text-indigo-600" />
-                  <h3 className="text-lg font-bold text-[#1D1D1F]">Google Gemini API Key</h3>
+                  <h3 className="text-lg font-bold text-[#1D1D1F]">AI Model & API Key Configuration</h3>
                 </div>
                 <button
                   onClick={() => setShowKeyModal(false)}
-                  className="text-black/40 hover:text-black text-sm"
+                  className="text-black/40 hover:text-black text-sm cursor-pointer"
                 >
                   ✕
                 </button>
               </div>
 
               <p className="text-xs text-black/60 leading-relaxed">
-                Enter your free Google Gemini API key from <strong>Google AI Studio</strong>. Keys are stored locally in your browser session and never sent anywhere other than the local backend.
+                Medicus natively supports both <strong>Google Gemini</strong> and <strong>OpenAI</strong> API keys. Keys are stored locally in your browser session and used for grounded operational intelligence.
               </p>
 
-              <div>
-                <label className="text-[11px] font-semibold uppercase tracking-wider text-black/50">Gemini API Key</label>
-                <input
-                  type="password"
-                  value={customKey}
-                  onChange={(e) => setCustomKey(e.target.value)}
-                  placeholder="AQ.Ab... or AIzaSy..."
-                  className="w-full mt-1 px-3 py-2 rounded-xl text-xs font-mono border border-black/15 focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                />
+              {/* Provider Selection Tabs */}
+              <div className="flex rounded-xl bg-black/5 p-1 text-xs font-semibold">
+                <button
+                  type="button"
+                  onClick={() => setModalTab('gemini')}
+                  className={`flex-1 py-1.5 rounded-lg transition-colors flex items-center justify-center gap-1.5 cursor-pointer ${
+                    modalTab === 'gemini' ? 'bg-white text-indigo-600 shadow-xs' : 'text-black/60 hover:text-black'
+                  }`}
+                >
+                  <Sparkles className="w-3.5 h-3.5" />
+                  <span>Google Gemini</span>
+                  {geminiKey && <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setModalTab('openai')}
+                  className={`flex-1 py-1.5 rounded-lg transition-colors flex items-center justify-center gap-1.5 cursor-pointer ${
+                    modalTab === 'openai' ? 'bg-white text-emerald-700 shadow-xs' : 'text-black/60 hover:text-black'
+                  }`}
+                >
+                  <Bot className="w-3.5 h-3.5" />
+                  <span>OpenAI</span>
+                  {openaiKey && <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />}
+                </button>
               </div>
 
+              {/* Tab 1: Google Gemini Configuration */}
+              {modalTab === 'gemini' && (
+                <div className="space-y-4">
+                  <div>
+                    <label className="text-[11px] font-semibold uppercase tracking-wider text-black/60">
+                      Google Gemini API Key
+                    </label>
+                    <input
+                      type="password"
+                      value={geminiKey}
+                      onChange={(e) => setGeminiKey(e.target.value)}
+                      placeholder="AIzaSy... (from Google AI Studio)"
+                      className="w-full mt-1 px-3 py-2 rounded-xl text-xs font-mono border border-black/15 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                    />
+                    <span className="text-[10px] text-black/40 mt-1 block">
+                      Free tier keys available at <a href="https://aistudio.google.com" target="_blank" rel="noreferrer" className="text-indigo-600 underline">Google AI Studio</a>.
+                    </span>
+                  </div>
+
+                  <div>
+                    <label className="text-[11px] font-semibold uppercase tracking-wider text-black/60">
+                      Gemini Model
+                    </label>
+                    <select
+                      value={geminiModel}
+                      onChange={(e) => setGeminiModel(e.target.value)}
+                      className="w-full mt-1 px-3 py-2 rounded-xl text-xs border border-black/15 bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500 cursor-pointer"
+                    >
+                      <option value="gemini-2.5-flash">Gemini 2.5 Flash (Recommended & Free Tier Fast)</option>
+                      <option value="gemini-1.5-flash">Gemini 1.5 Flash (High Efficiency)</option>
+                      <option value="gemini-1.5-pro">Gemini 1.5 Pro (Deep Reasoning)</option>
+                    </select>
+                  </div>
+                </div>
+              )}
+
+              {/* Tab 2: OpenAI Configuration */}
+              {modalTab === 'openai' && (
+                <div className="space-y-4">
+                  <div>
+                    <label className="text-[11px] font-semibold uppercase tracking-wider text-black/60">
+                      OpenAI API Key
+                    </label>
+                    <input
+                      type="password"
+                      value={openaiKey}
+                      onChange={(e) => setOpenAIKey(e.target.value)}
+                      placeholder="sk-proj-... or sk-..."
+                      className="w-full mt-1 px-3 py-2 rounded-xl text-xs font-mono border border-black/15 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                    />
+                    <span className="text-[10px] text-black/40 mt-1 block">
+                      Keys available at <a href="https://platform.openai.com/api-keys" target="_blank" rel="noreferrer" className="text-emerald-600 underline">OpenAI Developer Platform</a>.
+                    </span>
+                  </div>
+
+                  <div>
+                    <label className="text-[11px] font-semibold uppercase tracking-wider text-black/60">
+                      OpenAI Model
+                    </label>
+                    <select
+                      value={openaiModel}
+                      onChange={(e) => setOpenAIModel(e.target.value)}
+                      className="w-full mt-1 px-3 py-2 rounded-xl text-xs border border-black/15 bg-white focus:outline-none focus:ring-2 focus:ring-emerald-500 cursor-pointer"
+                    >
+                      <option value="gpt-4o-mini">GPT-4o Mini (Recommended, Fast & Cost-Effective)</option>
+                      <option value="gpt-4o">GPT-4o (Omni Frontier Intelligence)</option>
+                      <option value="gpt-3.5-turbo">GPT-3.5 Turbo (Legacy Fallback)</option>
+                    </select>
+                  </div>
+                </div>
+              )}
+
+              {/* Modal Actions */}
               <div className="flex items-center justify-end gap-2 pt-2">
                 <button
+                  type="button"
                   onClick={() => setShowKeyModal(false)}
-                  className="px-3 py-1.5 rounded-lg text-xs font-medium text-black/60 hover:text-black"
+                  className="px-3 py-1.5 rounded-lg text-xs font-medium text-black/60 hover:text-black cursor-pointer"
                 >
                   Cancel
                 </button>
                 <button
-                  onClick={handleSaveKey}
+                  type="button"
+                  onClick={handleSaveKeys}
                   className="px-4 py-1.5 rounded-lg text-xs font-semibold bg-indigo-600 hover:bg-indigo-700 text-white shadow-sm cursor-pointer"
                 >
-                  Save & Apply
+                  Save & Apply Settings
                 </button>
               </div>
             </motion.div>
@@ -299,63 +457,39 @@ export const CopilotView: React.FC = () => {
         )}
       </AnimatePresence>
 
-      {/* Chat Messages Feed */}
-      <section className="bg-white rounded-3xl border border-black/5 shadow-sm p-4 sm:p-6 min-h-[420px] max-h-[580px] overflow-y-auto space-y-4">
+      {/* Message Feed Canvas */}
+      <section className="bg-white/80 backdrop-blur-md rounded-2xl p-6 border border-black/5 shadow-xs space-y-4 min-h-[460px] max-h-[580px] overflow-y-auto">
         {messages.map((msg) => (
           <div
             key={msg.id}
             className={`flex items-start gap-3 ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}
           >
             {msg.role === 'assistant' && (
-              <div className="w-8 h-8 rounded-full bg-gradient-to-tr from-indigo-600 to-blue-500 text-white flex items-center justify-center flex-shrink-0 text-xs shadow-xs mt-1">
-                <Sparkles className="w-4 h-4" />
+              <div className="w-8 h-8 rounded-full bg-[#007AFF] text-white flex items-center justify-center flex-shrink-0 text-xs shadow-xs mt-1 font-bold">
+                M
               </div>
             )}
 
             <div
-              className={`max-w-[85%] rounded-2xl p-4 space-y-2 text-xs leading-relaxed ${
+              className={`max-w-[82%] rounded-2xl px-4 py-3 space-y-2 shadow-xs ${
                 msg.role === 'user'
-                  ? 'bg-blue-600 text-white shadow-xs'
-                  : msg.guardrailTriggered
-                  ? 'bg-amber-50 border border-amber-200 text-amber-950 shadow-xs'
-                  : 'bg-[#F8F8FA] border border-black/5 text-[#1D1D1F] shadow-xs'
+                  ? 'bg-[#007AFF] text-white rounded-tr-xs'
+                  : 'bg-[#F8F8FA] text-[#1D1D1F] border border-black/5 rounded-tl-xs'
               }`}
             >
-              {/* Guardrail Alert Header */}
-              {msg.guardrailTriggered && (
-                <div className="flex items-center gap-1.5 pb-2 border-b border-amber-200 text-amber-800 font-bold text-[11px] uppercase tracking-wider">
-                  <ShieldAlert className="w-4 h-4 text-amber-600" />
-                  <span>
-                    Guardrail Boundary Triggered: {msg.guardrailType || 'Policy Enforcement'}
-                  </span>
-                </div>
-              )}
-
-              {/* Message text with Markdown-friendly line breaks */}
-              <div className="whitespace-pre-wrap font-sans text-xs">
-                {msg.text}
+              {/* Message text formatted as clean normal chat */}
+              <div className="whitespace-pre-wrap font-sans text-xs leading-relaxed">
+                {formatChatMessage(msg.text)}
               </div>
 
-              {/* Footnotes / Provenance Citations */}
-              {msg.role === 'assistant' && msg.citations && msg.citations.length > 0 && (
-                <div className="pt-2 border-t border-black/5 flex flex-wrap items-center justify-between text-[10px] text-black/50 gap-2 font-mono">
-                  <span className="flex items-center gap-1 text-emerald-700">
-                    <CheckCircle className="w-3 h-3 text-emerald-600" />
-                    {msg.source || 'Verified Telemetry'}
-                  </span>
-                  <div className="flex items-center gap-1 flex-wrap">
-                    {msg.citations.map((c, i) => (
-                      <span key={i} className="bg-white px-2 py-0.5 rounded-full border border-black/10">
-                        {c}
-                      </span>
-                    ))}
-                  </div>
-                </div>
-              )}
+              {/* Timestamp */}
+              <div className={`text-[10px] ${msg.role === 'user' ? 'text-white/60 text-right' : 'text-black/35 text-left'}`}>
+                {msg.timestamp}
+              </div>
             </div>
 
             {msg.role === 'user' && (
-              <div className="w-8 h-8 rounded-full bg-blue-700 text-white flex items-center justify-center flex-shrink-0 text-xs shadow-xs mt-1 font-bold">
+              <div className="w-8 h-8 rounded-full bg-[#1D1D1F] text-white flex items-center justify-center flex-shrink-0 text-xs shadow-xs mt-1 font-bold">
                 U
               </div>
             )}
@@ -364,12 +498,12 @@ export const CopilotView: React.FC = () => {
 
         {loading && (
           <div className="flex items-center gap-3">
-            <div className="w-8 h-8 rounded-full bg-gradient-to-tr from-indigo-600 to-blue-500 text-white flex items-center justify-center flex-shrink-0 text-xs animate-spin">
-              <Sparkles className="w-4 h-4" />
+            <div className="w-8 h-8 rounded-full bg-[#007AFF] text-white flex items-center justify-center flex-shrink-0 text-xs shadow-xs font-bold">
+              M
             </div>
             <div className="bg-[#F8F8FA] border border-black/5 rounded-2xl px-4 py-3 text-xs text-black/60 flex items-center gap-2">
-              <div className="w-2 h-2 rounded-full bg-indigo-500 animate-ping" />
-              <span>Querying verified SQLite invariants and synthesizing response...</span>
+              <div className="w-2 h-2 rounded-full bg-[#007AFF] animate-ping" />
+              <span>Retrieving operational records...</span>
             </div>
           </div>
         )}
@@ -462,7 +596,7 @@ export const CopilotView: React.FC = () => {
           </button>
         </form>
         <p className="text-[11px] text-center text-black/40 mt-2">
-          Strictly grounded on verified public healthcare telemetry • Clinical diagnosis queries are redirected per safety policy.
+          Medicus Operations & Supply Chain Support for Public Health Facilities.
         </p>
       </section>
     </div>
