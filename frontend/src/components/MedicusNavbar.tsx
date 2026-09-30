@@ -196,9 +196,12 @@ export const MedicusNavbar: React.FC<Props> = ({
           {/* Brand Left */}
           <div 
             onClick={() => onTabChange('national')}
-            className="flex items-center cursor-pointer flex-shrink-0 select-none"
+            className="flex items-center gap-2.5 cursor-pointer flex-shrink-0 select-none"
           >
-            <img src={medicusLogo} alt="Medicus" className="w-24 h-14 object-contain object-left" />
+            <img src={medicusLogo} alt="frontend logo" className="w-12 h-12 object-contain object-left" />
+            <div className="text-left leading-none">
+              <div className="text-lg font-bold tracking-tight text-[#1D1D1F]">frontend</div>
+            </div>
           </div>
 
           {/* Desktop Center Flowing Pill Navigation (Hidden on mobile < md) */}

@@ -21,16 +21,21 @@ let currentLoadedKey: string | null = null;
 
 export const getGoogleMapsApiKey = (): string => {
   if (typeof window === 'undefined') return '';
-  // 1. In-code configuration file (strictly excluded by .gitignore)
 
-  // 2. Vite environment variable from .env (strictly excluded by .gitignore)
   const envKey = import.meta.env.VITE_GOOGLE_MAPS_API_KEY;
+
+  console.log(
+    'MEDICUS Google Maps env key present:',
+    Boolean(envKey)
+  );
+
   if (envKey && typeof envKey === 'string' && envKey.trim()) {
     return envKey.trim();
   }
-  // 3. Local browser cache fallback
+
   const stored = localStorage.getItem(STORAGE_KEY);
   if (stored && stored.trim()) return stored.trim();
+
   return '';
 };
 
